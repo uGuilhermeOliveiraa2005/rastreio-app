@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:http/http.dart' as http; 
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -15,7 +15,7 @@ import 'service_background.dart';
 // ---------------------------------------------------------
 // CONFIGURAÇÃO DO SERVIDOR
 // ---------------------------------------------------------
-const String baseUrl = "https://meindicaalguem.com.br/api/rastreio";
+const String baseUrl = "https://meindicaalguem.com.br/api/rastreio"; 
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +34,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         primarySwatch: Colors.blue,
+        // Define uma fonte padrão bonita se quiser
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       ),
       home: const MenuScreen(),
@@ -55,6 +56,7 @@ class MenuScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // Logo ou Ícone bonito
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -74,24 +76,24 @@ class MenuScreen extends StatelessWidget {
                 style: TextStyle(color: Colors.grey, fontSize: 16),
               ),
               const SizedBox(height: 60),
-
+              
               _botaoMenu(
-                context,
-                "SOU MOTOBOY",
+                context, 
+                "SOU MOTOBOY", 
                 "Compartilhar localização",
-                Icons.two_wheeler,
-                Colors.blue,
+                Icons.two_wheeler, 
+                Colors.blue, 
                 () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MotoboyScreen()))
               ),
-
+              
               const SizedBox(height: 20),
-
+              
               _botaoMenu(
-                context,
-                "SOU CLIENTE",
+                context, 
+                "SOU CLIENTE", 
                 "Acompanhar pedido",
-                Icons.person_pin_circle,
-                Colors.green,
+                Icons.person_pin_circle, 
+                Colors.green, 
                 () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ClienteLoginScreen()))
               ),
             ],
@@ -111,7 +113,7 @@ class MenuScreen extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 20, offset: const Offset(0,10)),
-            BoxShadow(color: cor.withOpacity(0.1), blurRadius: 0, offset: const Offset(0,0)),
+            BoxShadow(color: cor.withOpacity(0.1), blurRadius: 0, offset: const Offset(0,0)), // Borda sutil
           ],
           border: Border.all(color: Colors.grey.shade100),
         ),
@@ -126,18 +128,14 @@ class MenuScreen extends StatelessWidget {
               child: Icon(icone, color: Colors.white, size: 28),
             ),
             const SizedBox(width: 20),
-            // MUDANÇA PRINCIPAL: Usar Expanded para que o Column de texto use
-            // o espaço restante, evitando overflow em títulos longos ou telas pequenas.
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(titulo, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
-                  Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 13)),
-                ],
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(titulo, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
+                Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+              ],
             ),
-            const SizedBox(width: 10), // Adicionado um pequeno espaço
+            const Spacer(),
             Icon(Icons.arrow_forward_ios_rounded, size: 18, color: Colors.grey[300]),
           ],
         ),
@@ -146,7 +144,7 @@ class MenuScreen extends StatelessWidget {
   }
 }
 
-// --- TELA DO MOTOBOY (CORRIGIDA) ---
+// --- TELA DO MOTOBOY (DESIGN NOVO) ---
 class MotoboyScreen extends StatefulWidget {
   const MotoboyScreen({super.key});
 
@@ -169,27 +167,17 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    // IMPORTANTE: Para o serviço quando a tela é destruída
-    if (_codigoSessao != null) {
-      _pararServico();
-    }
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Detecta quando o app está sendo fechado completamente
-    if (state == AppLifecycleState.detached || state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.detached) {
       if (_codigoSessao != null) {
-        _pararServico();
+        final service = FlutterBackgroundService();
+        service.invoke("stopService");
       }
     }
-  }
-
-  // Método centralizado para parar o serviço
-  void _pararServico() {
-    final service = FlutterBackgroundService();
-    service.invoke("stopService");
   }
 
   Future<void> _iniciarEntrega() async {
@@ -217,7 +205,7 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
               _codigoSessao = novoCodigo;
               _isLoading = false;
             });
-
+            
             final service = FlutterBackgroundService();
             await service.startService();
             service.invoke("startTracking", {'codigo': novoCodigo});
@@ -247,8 +235,9 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
       try {
         await http.post(Uri.parse('$baseUrl/finalizar.php'), body: {'codigo': _codigoSessao!});
       } catch (e) { /* Ignora erro de rede ao finalizar */ }
-
-      _pararServico();
+      
+      final service = FlutterBackgroundService();
+      service.invoke("stopService");
     }
     setState(() => _codigoSessao = null);
   }
@@ -256,17 +245,9 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false, // MUDANÇA: Sempre impede o pop automático
+      canPop: _codigoSessao == null,
       onPopInvoked: (didPop) async {
         if (didPop) return;
-
-        if (_codigoSessao == null) {
-          // Se não tem corrida ativa, pode sair
-          Navigator.pop(context);
-          return;
-        }
-
-        // Se tem corrida ativa, mostra o diálogo
         final deveSair = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
@@ -275,18 +256,13 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
             actions: [
               TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Voltar")),
               TextButton(onPressed: () {
+                _finalizar();
                 Navigator.pop(context, true);
+                Navigator.pop(context);
               }, child: const Text("Finalizar e Sair", style: TextStyle(color: Colors.red))),
             ],
           ),
         );
-
-        if (deveSair == true) {
-          await _finalizar();
-          if (context.mounted) {
-            Navigator.pop(context);
-          }
-        }
       },
       child: Scaffold(
         backgroundColor: Colors.grey[50],
@@ -298,7 +274,7 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
           titleTextStyle: const TextStyle(color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold),
           iconTheme: const IconThemeData(color: Colors.black),
         ),
-        body: _isLoading
+        body: _isLoading 
             ? const Center(child: CircularProgressIndicator())
             : _codigoSessao == null
                 ? _buildTelaInicial()
@@ -307,73 +283,76 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
     );
   }
 
+  // --- WIDGET: TELA INICIAL (BONITA) ---
   Widget _buildTelaInicial() {
     return Center(
-      child: SingleChildScrollView( // Envolver em SingleChildScrollView para evitar overflow em telas pequenas
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.blue.withOpacity(0.3))
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                     Row(children: [Icon(Icons.wifi, size: 16, color: Colors.blue), SizedBox(width: 5), Text("Online", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))]),
-                     Row(children: [Icon(Icons.gps_fixed, size: 16, color: Colors.blue), SizedBox(width: 5), Text("GPS Pronto", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))]),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 50),
-
-              GestureDetector(
-                onTap: _iniciarEntrega,
-                child: Container(
-                  width: 200,
-                  height: 200,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    boxShadow: [
-                      BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 20, spreadRadius: 5, offset: const Offset(0, 10))
-                    ],
-                  ),
-                  child: const Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.play_arrow_rounded, size: 80, color: Colors.white),
-                      Text("INICIAR", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 40),
-              const Text("Toque para gerar o código\ne começar a compartilhar sua rota", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTelaAtiva() {
-    return SingleChildScrollView( // Envolver em SingleChildScrollView para evitar overflow em telas pequenas
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            // Card de Status
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue.withOpacity(0.3))
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                   Row(children: [Icon(Icons.wifi, size: 16, color: Colors.blue), SizedBox(width: 5), Text("Online", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))]),
+                   Row(children: [Icon(Icons.gps_fixed, size: 16, color: Colors.blue), SizedBox(width: 5), Text("GPS Pronto", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))]),
+                ],
+              ),
+            ),
+            const SizedBox(height: 50),
+            
+            // Botão Gigante
+            GestureDetector(
+              onTap: _iniciarEntrega,
+              child: Container(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 20, spreadRadius: 5, offset: const Offset(0, 10))
+                  ],
+                ),
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.play_arrow_rounded, size: 80, color: Colors.white),
+                    Text("INICIAR", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 40),
+            const Text("Toque para gerar o código\ne começar a compartilhar sua rota", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- WIDGET: TELA DE ENTREGA ATIVA (BONITA) ---
+  Widget _buildTelaAtiva() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Badge de Status
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               decoration: BoxDecoration(color: Colors.green[100], borderRadius: BorderRadius.circular(20)),
@@ -387,7 +366,8 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
               ),
             ),
             const SizedBox(height: 30),
-
+            
+            // Card do Código
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(30),
@@ -408,9 +388,10 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
                 ],
               ),
             ),
-
+            
             const SizedBox(height: 50),
-
+            
+            // Botão Finalizar
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -452,53 +433,51 @@ class ClienteLoginScreen extends StatelessWidget {
         iconTheme: const IconThemeData(color: Colors.black),
         titleTextStyle: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 18),
       ),
-      body: SingleChildScrollView( // Envolver em SingleChildScrollView
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("Onde está meu pedido?", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              const Text("Insira o código que o entregador lhe enviou.", style: TextStyle(color: Colors.grey)),
-              const SizedBox(height: 30),
-              TextField(
-                controller: controller,
-                keyboardType: TextInputType.number,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 32, letterSpacing: 8, fontWeight: FontWeight.bold),
-                maxLength: 5,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Colors.grey[100],
-                  counterText: "",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                  hintText: "00000",
-                  hintStyle: TextStyle(color: Colors.grey[300]),
-                ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Onde está meu pedido?", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            const Text("Insira o código que o entregador lhe enviou.", style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 30),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 32, letterSpacing: 8, fontWeight: FontWeight.bold),
+              maxLength: 5,
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: Colors.grey[100],
+                counterText: "",
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+                hintText: "00000",
+                hintStyle: TextStyle(color: Colors.grey[300]),
               ),
-              const SizedBox(height: 30),
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                  onPressed: () {
-                    if (controller.text.length == 5) {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => MapaClienteScreen(codigo: controller.text)));
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                    textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
-                  ),
-                  child: const Text("RASTREAR AGORA"),
+            ),
+            const SizedBox(height: 30),
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton(
+                onPressed: () {
+                  if (controller.text.length == 5) {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => MapaClienteScreen(codigo: controller.text)));
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
                 ),
-              )
-            ],
-          ),
+                child: const Text("RASTREAR AGORA"),
+              ),
+            )
+          ],
         ),
       ),
     );
@@ -515,26 +494,32 @@ class MapaClienteScreen extends StatefulWidget {
 }
 
 class _MapaClienteScreenState extends State<MapaClienteScreen> {
+  // Controle do Mapa
   final MapController _mapController = MapController();
-
+  
+  // Estado
   LatLng? _posicaoMoto;
   LatLng? _minhaPosicao;
   Timer? _timerPolling;
-
+  
+  // Variáveis de info
   bool _ativo = true;
   String _statusTxt = "Localizando motoboy...";
   String _distanciaTxt = "-- km";
   String _tempoTxt = "-- min";
-
-  bool _mapaPronto = false;
-  bool _seguirMoto = true;
+  
+  // TRAVA DE SEGURANÇA DO MAPA
+  bool _mapaPronto = false; 
+  
+  // Alternador de Seguir
+  bool _seguirMoto = true; 
 
   @override
   void initState() {
     super.initState();
     _pegarMinhaLocalizacao();
     _atualizarPosicaoMoto();
-
+    
     _timerPolling = Timer.periodic(const Duration(seconds: 3), (timer) {
       _atualizarPosicaoMoto();
     });
@@ -556,13 +541,13 @@ class _MapaClienteScreenState extends State<MapaClienteScreen> {
 
     try {
       final response = await http.get(Uri.parse('$baseUrl/ler_posicao.php?codigo=${widget.codigo}'));
-
+      
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
 
         if (data['status'] == 'ativo') {
           LatLng novaPos = LatLng(data['lat'], data['lng']);
-
+          
           setState(() {
             _posicaoMoto = novaPos;
             _statusTxt = "Em trânsito";
@@ -591,7 +576,7 @@ class _MapaClienteScreenState extends State<MapaClienteScreen> {
     if (_posicaoMoto != null && _minhaPosicao != null) {
       final Distance distance = const Distance();
       double kmReto = distance.as(LengthUnit.Kilometer, _posicaoMoto!, _minhaPosicao!);
-
+      
       double kmReal = kmReto * 1.4;
       double horas = kmReal / 30.0;
       int minutos = (horas * 60).round();
@@ -617,6 +602,7 @@ class _MapaClienteScreenState extends State<MapaClienteScreen> {
       appBar: AppBar(title: Text("Pedido #${widget.codigo}")),
       body: Stack(
         children: [
+          // MAPA
           if (_posicaoMoto != null)
              FlutterMap(
               mapController: _mapController,
@@ -661,7 +647,7 @@ class _MapaClienteScreenState extends State<MapaClienteScreen> {
                 ),
               ],
             ),
-
+            
           if (_posicaoMoto != null && _ativo)
             Positioned(
               right: 20,
@@ -725,7 +711,7 @@ class _MapaClienteScreenState extends State<MapaClienteScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(!_ativo ? Icons.check_circle : Icons.search,
+                    Icon(!_ativo ? Icons.check_circle : Icons.search, 
                          size: 60, color: !_ativo ? Colors.green : Colors.blue),
                     const SizedBox(height: 10),
                     Text(_statusTxt, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),

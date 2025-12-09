@@ -5,11 +5,13 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
+// URL REPETIDA AQUI POIS O SERVIÇO RODA ISOLADO DO MAIN
 const String baseUrl = "https://meindicaalguem.com.br/api/rastreio";
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
 
+  // Configura o canal de notificação (Android)
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'my_foreground', 
     'Rastreio Ativo', 
@@ -25,9 +27,13 @@ Future<void> initializeService() async {
 
   await service.configure(
     androidConfiguration: AndroidConfiguration(
+      // Esta é a função que será executada
       onStart: onStart,
+      
+      // Importante: autoStart false para só ligar quando o motoboy clicar
       autoStart: false, 
       isForegroundMode: true,
+      
       notificationChannelId: 'my_foreground',
       initialNotificationTitle: 'Rastreio MeIndica',
       initialNotificationContent: 'Inicializando GPS...',
@@ -40,40 +46,28 @@ Future<void> initializeService() async {
   );
 }
 
+// --- FUNÇÃO QUE RODA EM SEGUNDO PLANO ---
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
+  // Garante que o Dart esteja pronto
   DartPluginRegistrant.ensureInitialized();
   
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
+  // Variáveis locais do serviço
   StreamSubscription<Position>? positionStream;
-  bool isTracking = false;
 
-  // Escuta o comando "stopService" - PARA TUDO E ENCERRA
+  // Escuta o comando "stopService" vindo da tela
   service.on('stopService').listen((event) {
-    print("BACKGROUND: Recebido comando stopService");
-    
-    // Cancela o stream de localização
-    positionStream?.cancel();
-    positionStream = null;
-    isTracking = false;
-    
-    // Remove a notificação
-    flutterLocalNotificationsPlugin.cancel(888);
-    
-    // Para o serviço completamente
     service.stopSelf();
   });
 
-  // Escuta o comando "startTracking"
+  // Escuta o comando "startTracking" vindo da tela
   service.on('startTracking').listen((event) async {
-    if (event != null && !isTracking) {
+    if (event != null) {
       String codigo = event['codigo'];
-      isTracking = true;
       
-      print("BACKGROUND: Iniciando rastreio para código $codigo");
-      
-      // Mostra notificação
+      // Atualiza a notificação para mostrar que está rodando
       flutterLocalNotificationsPlugin.show(
         888,
         'Rastreio em Andamento',
@@ -82,50 +76,34 @@ void onStart(ServiceInstance service) async {
           android: AndroidNotificationDetails(
             'my_foreground',
             'Rastreio Ativo',
-            icon: 'ic_bg_service_small',
+            icon: 'ic_bg_service_small', // Ícone padrão do Android
             ongoing: true,
-            autoCancel: false,
           ),
         ),
       );
 
-      // Configura o GPS
+      // Inicia o GPS aqui dentro do serviço
       const LocationSettings locationSettings = LocationSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 10, 
       );
 
-      // Inicia o stream de localização
-      positionStream = Geolocator.getPositionStream(
-        locationSettings: locationSettings
-      ).listen(
-        (Position position) async {
-          if (!isTracking) {
-            positionStream?.cancel();
-            return;
-          }
+      positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) async {
+        try {
+          print("BACKGROUND: Enviando Lat: ${position.latitude}");
           
-          try {
-            print("BACKGROUND: Enviando Lat: ${position.latitude}, Lng: ${position.longitude}");
-            
-            await http.post(
-              Uri.parse('$baseUrl/atualizar_local.php'),
-              body: {
-                'codigo': codigo,
-                'lat': position.latitude.toString(),
-                'lng': position.longitude.toString(),
-              },
-            ).timeout(const Duration(seconds: 10));
-            
-          } catch (e) {
-            print("BACKGROUND: Erro no envio: $e");
-          }
-        },
-        onError: (error) {
-          print("BACKGROUND: Erro no GPS: $error");
-        },
-        cancelOnError: false,
-      );
+          await http.post(
+            Uri.parse('$baseUrl/atualizar_local.php'),
+            body: {
+              'codigo': codigo,
+              'lat': position.latitude.toString(),
+              'lng': position.longitude.toString(),
+            },
+          );
+        } catch (e) {
+          print("Erro no envio background: $e");
+        }
+      });
     }
   });
 }
