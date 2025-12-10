@@ -1,25 +1,35 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui'; // Necessário para efeitos visuais
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; 
 import 'package:http/http.dart' as http; 
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-// Importamos o arquivo do serviço de background
 import 'service_background.dart';
 
-// ---------------------------------------------------------
-// CONFIGURAÇÃO DO SERVIDOR
-// ---------------------------------------------------------
+// ============================================================================
+// CONFIGURAÇÃO GERAL
+// ============================================================================
 const String baseUrl = "https://meindicaalguem.com.br/api/rastreio"; 
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeService(); // Inicializa o serviço de background
+  
+  // TRAVA O APP EM MODO RETRATO
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
+  await initializeService(); 
+  
   runApp(const MyApp());
 }
 
@@ -34,67 +44,99 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         primarySwatch: Colors.blue,
-        // Define uma fonte padrão bonita se quiser
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          elevation: 0,
+          centerTitle: true,
+          iconTheme: IconThemeData(color: Colors.black),
+          titleTextStyle: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.grey[100],
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Colors.blue, width: 2)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          labelStyle: TextStyle(color: Colors.grey[600]),
+        ),
+
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ),
       ),
       home: const MenuScreen(),
     );
   }
 }
 
-// --- TELA INICIAL (MENU) ---
-class MenuScreen extends StatelessWidget {
-  const MenuScreen({super.key});
+// ============================================================================
+// WIDGET: CUSTOM DIALOG (MODAL BONITO)
+// ============================================================================
+class CustomDialog extends StatelessWidget {
+  final String title;
+  final Widget content;
+  final List<Widget> actions;
+  final IconData icon;
+  final Color color;
+
+  const CustomDialog({
+    super.key,
+    required this.title,
+    required this.content,
+    required this.actions,
+    this.icon = Icons.info_rounded,
+    this.color = Colors.blue,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
       backgroundColor: Colors.white,
-      body: SafeArea(
+      surfaceTintColor: Colors.white,
+      child: SingleChildScrollView( // Protege contra overflow do teclado
         child: Padding(
-          padding: const EdgeInsets.all(30.0),
+          padding: const EdgeInsets.all(24.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // Logo ou Ícone bonito
               Container(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
+                  color: color.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.location_on_rounded, size: 60, color: Colors.blue),
+                child: Icon(icon, size: 40, color: color),
               ),
-              const SizedBox(height: 30),
-              const Text(
-                "Rastreio MeIndica",
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                "Escolha como deseja acessar",
-                style: TextStyle(color: Colors.grey, fontSize: 16),
-              ),
-              const SizedBox(height: 60),
-              
-              _botaoMenu(
-                context, 
-                "SOU MOTOBOY", 
-                "Compartilhar localização",
-                Icons.two_wheeler, 
-                Colors.blue, 
-                () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MotoboyScreen()))
-              ),
-              
               const SizedBox(height: 20),
-              
-              _botaoMenu(
-                context, 
-                "SOU CLIENTE", 
-                "Acompanhar pedido",
-                Icons.person_pin_circle, 
-                Colors.green, 
-                () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ClienteLoginScreen()))
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+              ),
+              const SizedBox(height: 16),
+              content,
+              const SizedBox(height: 24),
+              Row(
+                children: actions.map((widget) {
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      child: widget,
+                    ),
+                  );
+                }).toList(),
               ),
             ],
           ),
@@ -102,40 +144,183 @@ class MenuScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+// ============================================================================
+// TELA 1: MENU PRINCIPAL
+// ============================================================================
+
+class MenuScreen extends StatefulWidget {
+  const MenuScreen({super.key});
+
+  @override
+  State<MenuScreen> createState() => _MenuScreenState();
+}
+
+class _MenuScreenState extends State<MenuScreen> {
+  
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verificarSessaoGlobal();
+    });
+  }
+
+  Future<void> _verificarSessaoGlobal() async {
+    final prefs = await SharedPreferences.getInstance();
+    final codigoSalvo = prefs.getString('sessao_codigo');
+
+    if (codigoSalvo != null && mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => CustomDialog(
+          icon: Icons.history,
+          color: Colors.orange,
+          title: "Rastreio Pendente",
+          content: Text(
+            "O rastreio #$codigoSalvo ainda está ativo.\nDeseja retomar?",
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.grey, fontSize: 16),
+          ),
+          actions: [
+            OutlinedButton(
+              onPressed: () { Navigator.pop(ctx); _descartarSessao(codigoSalvo); },
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                side: BorderSide(color: Colors.red.withOpacity(0.5)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text("Descartar", style: TextStyle(color: Colors.red)),
+            ),
+            ElevatedButton(
+              onPressed: () { 
+                Navigator.pop(ctx); 
+                _direcionarMotoboy(autoRestaurar: true); 
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue, 
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: const Text("Retomar"),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Future<void> _descartarSessao(String codigo) async {
+    try { await http.post(Uri.parse('$baseUrl/finalizar.php'), body: {'codigo': codigo}); } catch (e) { print("Erro rede: $e"); }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('sessao_codigo');
+    await prefs.remove('sessao_total');
+    await prefs.remove('sessao_concluidas');
+    await prefs.remove('sessao_multipla');
+  }
+
+  Future<void> _direcionarMotoboy({bool autoRestaurar = false}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final motoboyId = prefs.getString('motoboy_id');
+    
+    if (mounted) {
+      if (motoboyId != null) {
+        Navigator.push(context, MaterialPageRoute(builder: (_) => MotoboyScreen(autoRestaurar: autoRestaurar)));
+      } else {
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const MotoboyLoginScreen()));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // LOGO E TÍTULO
+                    Column(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(25),
+                          decoration: BoxDecoration(color: Colors.blue.withOpacity(0.08), shape: BoxShape.circle),
+                          child: const Icon(Icons.location_on_rounded, size: 60, color: Colors.blue),
+                        ),
+                        const SizedBox(height: 25),
+                        const FittedBox(
+                          child: Text("Rastreio MeIndica", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.black87)),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text("Selecione seu perfil para acessar", style: TextStyle(color: Colors.grey, fontSize: 16)),
+                      ],
+                    ),
+                    
+                    const SizedBox(height: 60),
+
+                    // BOTÕES
+                    _botaoMenu(context, "SOU ENTREGADOR", "Compartilhar localização", Icons.two_wheeler, Colors.blue, () => _direcionarMotoboy()),
+                    const SizedBox(height: 16),
+                    _botaoMenu(context, "SOU VENDEDOR", "Gerenciar entregadores", Icons.storefront_rounded, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VendedorLoginScreen()))),
+                    const SizedBox(height: 16),
+                    _botaoMenu(context, "SOU CLIENTE", "Acompanhar pedido", Icons.person_pin_circle, Colors.green, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ClienteLoginScreen()))),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+      ),
+    );
+  }
 
   Widget _botaoMenu(BuildContext context, String titulo, String sub, IconData icone, Color cor, VoidCallback aoClicar) {
     return InkWell(
       onTap: aoClicar,
+      borderRadius: BorderRadius.circular(20),
       child: Container(
-        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
-            BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 20, offset: const Offset(0,10)),
-            BoxShadow(color: cor.withOpacity(0.1), blurRadius: 0, offset: const Offset(0,0)), // Borda sutil
+            BoxShadow(color: Colors.grey.withOpacity(0.08), blurRadius: 15, offset: const Offset(0,5)),
+            BoxShadow(color: cor.withOpacity(0.1), blurRadius: 0, offset: const Offset(0,0)), 
           ],
           border: Border.all(color: Colors.grey.shade100),
         ),
+        padding: const EdgeInsets.all(20),
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(15),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [cor, cor.withOpacity(0.7)]),
-                borderRadius: BorderRadius.circular(15)
-              ),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(gradient: LinearGradient(colors: [cor, cor.withOpacity(0.7)]), borderRadius: BorderRadius.circular(15)),
               child: Icon(icone, color: Colors.white, size: 28),
             ),
             const SizedBox(width: 20),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(titulo, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
-                Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 13)),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(titulo, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 13), overflow: TextOverflow.ellipsis, maxLines: 1),
+                ],
+              ),
             ),
-            const Spacer(),
             Icon(Icons.arrow_forward_ios_rounded, size: 18, color: Colors.grey[300]),
           ],
         ),
@@ -144,339 +329,117 @@ class MenuScreen extends StatelessWidget {
   }
 }
 
-// --- TELA DO MOTOBOY (DESIGN NOVO) ---
-class MotoboyScreen extends StatefulWidget {
-  const MotoboyScreen({super.key});
+// ============================================================================
+// TELA 2: LOGIN DO MOTOBOY
+// ============================================================================
+
+class MotoboyLoginScreen extends StatefulWidget {
+  const MotoboyLoginScreen({super.key});
 
   @override
-  State<MotoboyScreen> createState() => _MotoboyScreenState();
+  State<MotoboyLoginScreen> createState() => _MotoboyLoginScreenState();
 }
 
-class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserver {
-  String? _codigoSessao;
+class _MotoboyLoginScreenState extends State<MotoboyLoginScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final _emailCtrl = TextEditingController();
+  final _senhaCtrl = TextEditingController();
+  final _nomeCtrl = TextEditingController();
   bool _isLoading = false;
-
-  String _generateCode() => (10000 + Random().nextInt(90000)).toString();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    _tabController = TabController(length: 2, vsync: this);
   }
 
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.detached) {
-      if (_codigoSessao != null) {
-        final service = FlutterBackgroundService();
-        service.invoke("stopService");
-      }
+  Future<void> _acaoAutenticacao() async {
+    if (_emailCtrl.text.isEmpty || _senhaCtrl.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Preencha todos os campos"), backgroundColor: Colors.red));
+      return;
     }
-  }
-
-  Future<void> _iniciarEntrega() async {
     setState(() => _isLoading = true);
 
-    await Permission.notification.request();
-    var statusLoc = await Permission.location.request();
-
-    if (statusLoc.isGranted) {
-      try {
-        Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-        String novoCodigo = _generateCode();
-
-        var url = Uri.parse('$baseUrl/criar_sessao.php');
-        var response = await http.post(url, body: {
-          'codigo': novoCodigo,
-          'lat': pos.latitude.toString(),
-          'lng': pos.longitude.toString(),
-        });
-
-        if (response.statusCode == 200) {
-          var json = jsonDecode(response.body);
-          if (json['status'] == 'sucesso') {
-             setState(() {
-              _codigoSessao = novoCodigo;
-              _isLoading = false;
-            });
-            
-            final service = FlutterBackgroundService();
-            await service.startService();
-            service.invoke("startTracking", {'codigo': novoCodigo});
-
-          } else {
-            throw Exception(json['msg'] ?? "Erro desconhecido");
-          }
-        } else {
-          throw Exception("Erro HTTP: ${response.statusCode}");
-        }
-      } catch (e) {
-        setState(() => _isLoading = false);
-        _mostrarErro("Erro ao conectar: $e");
-      }
-    } else {
-      setState(() => _isLoading = false);
-      _mostrarErro("Permissão de GPS negada.");
-    }
-  }
-
-  void _mostrarErro(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
-  }
-
-  Future<void> _finalizar() async {
-    if (_codigoSessao != null) {
-      try {
-        await http.post(Uri.parse('$baseUrl/finalizar.php'), body: {'codigo': _codigoSessao!});
-      } catch (e) { /* Ignora erro de rede ao finalizar */ }
+    try {
+      final isLogin = _tabController.index == 0;
+      final endpoint = isLogin ? 'login_motoboy.php' : 'cadastro_motoboy.php';
       
-      final service = FlutterBackgroundService();
-      service.invoke("stopService");
+      final response = await http.post(Uri.parse('$baseUrl/$endpoint'), body: {
+        'email': _emailCtrl.text,
+        'senha': _senhaCtrl.text,
+        if (!isLogin) 'nome': _nomeCtrl.text,
+      });
+
+      dynamic data;
+      try { data = jsonDecode(response.body); } catch (e) { throw Exception("Erro no servidor."); }
+
+      if (data['status'] == 'sucesso') {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('motoboy_id', data['id']);
+        await prefs.setString('motoboy_nome', data['nome']);
+        if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MotoboyScreen()));
+      } else {
+        throw Exception(data['msg']);
+      }
+    } catch (e) {
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red));
+    } finally {
+      if(mounted) setState(() => _isLoading = false);
     }
-    setState(() => _codigoSessao = null);
   }
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: _codigoSessao == null,
-      onPopInvoked: (didPop) async {
-        if (didPop) return;
-        final deveSair = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text("Entrega Ativa"),
-            content: const Text("Você precisa finalizar a entrega antes de sair."),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Voltar")),
-              TextButton(onPressed: () {
-                _finalizar();
-                Navigator.pop(context, true);
-                Navigator.pop(context);
-              }, child: const Text("Finalizar e Sair", style: TextStyle(color: Colors.red))),
-            ],
-          ),
-        );
-      },
-      child: Scaffold(
-        backgroundColor: Colors.grey[50],
-        appBar: AppBar(
-          title: const Text("Painel do Entregador"),
-          backgroundColor: Colors.white,
-          elevation: 0,
-          centerTitle: true,
-          titleTextStyle: const TextStyle(color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold),
-          iconTheme: const IconThemeData(color: Colors.black),
-        ),
-        body: _isLoading 
-            ? const Center(child: CircularProgressIndicator())
-            : _codigoSessao == null
-                ? _buildTelaInicial()
-                : _buildTelaAtiva(),
-      ),
-    );
-  }
-
-  // --- WIDGET: TELA INICIAL (BONITA) ---
-  Widget _buildTelaInicial() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Card de Status
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.blue.withOpacity(0.3))
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                   Row(children: [Icon(Icons.wifi, size: 16, color: Colors.blue), SizedBox(width: 5), Text("Online", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))]),
-                   Row(children: [Icon(Icons.gps_fixed, size: 16, color: Colors.blue), SizedBox(width: 5), Text("GPS Pronto", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))]),
-                ],
-              ),
-            ),
-            const SizedBox(height: 50),
-            
-            // Botão Gigante
-            GestureDetector(
-              onTap: _iniciarEntrega,
-              child: Container(
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  boxShadow: [
-                    BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 20, spreadRadius: 5, offset: const Offset(0, 10))
-                  ],
-                ),
-                child: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.play_arrow_rounded, size: 80, color: Colors.white),
-                    Text("INICIAR", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 40),
-            const Text("Toque para gerar o código\ne começar a compartilhar sua rota", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- WIDGET: TELA DE ENTREGA ATIVA (BONITA) ---
-  Widget _buildTelaAtiva() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Badge de Status
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              decoration: BoxDecoration(color: Colors.green[100], borderRadius: BorderRadius.circular(20)),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.fiber_manual_record, size: 12, color: Colors.green),
-                  SizedBox(width: 8),
-                  Text("TRANSMITINDO LOCALIZAÇÃO", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12)),
-                ],
-              ),
-            ),
-            const SizedBox(height: 30),
-            
-            // Card do Código
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(30),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 20, offset: const Offset(0,10))],
-              ),
-              child: Column(
-                children: [
-                  const Text("Código do Pedido", style: TextStyle(color: Colors.grey, fontSize: 16)),
-                  const SizedBox(height: 10),
-                  Text(_codigoSessao!, style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, letterSpacing: 5, color: Colors.black87)),
-                  const SizedBox(height: 20),
-                  const LinearProgressIndicator(backgroundColor: Color(0xFFEEEEEE), valueColor: AlwaysStoppedAnimation<Color>(Colors.blue)),
-                  const SizedBox(height: 10),
-                  const Text("Compartilhe este número com o cliente", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              ),
-            ),
-            
-            const SizedBox(height: 50),
-            
-            // Botão Finalizar
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.stop_circle_outlined),
-                label: const Text("FINALIZAR ENTREGA"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red[50],
-                  foregroundColor: Colors.red,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                  textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
-                ),
-                onPressed: _finalizar,
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text("O GPS continua ativo mesmo com a tela bloqueada.", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 12)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// --- TELA DO CLIENTE (LOGIN) ---
-class ClienteLoginScreen extends StatelessWidget {
-  const ClienteLoginScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = TextEditingController();
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text("Rastrear Pedido"),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black),
-        titleTextStyle: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 18),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Onde está meu pedido?", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            const Text("Insira o código que o entregador lhe enviou.", style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 30),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 32, letterSpacing: 8, fontWeight: FontWeight.bold),
-              maxLength: 5,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: Colors.grey[100],
-                counterText: "",
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                hintText: "00000",
-                hintStyle: TextStyle(color: Colors.grey[300]),
-              ),
+      appBar: AppBar(title: const Text("Entregador")),
+      body: Column(
+        children: [
+          TabBar(
+            controller: _tabController,
+            labelColor: Colors.blue,
+            unselectedLabelColor: Colors.grey,
+            indicatorColor: Colors.blue,
+            indicatorSize: TabBarIndicatorSize.tab,
+            tabs: const [Tab(text: "JÁ TENHO CONTA"), Tab(text: "CRIAR NOVA")],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildForm(isLogin: true),
+                _buildForm(isLogin: false),
+              ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildForm({required bool isLogin}) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            if (!isLogin) ...[
+              TextField(controller: _nomeCtrl, decoration: const InputDecoration(labelText: "Nome Completo", prefixIcon: Icon(Icons.person))),
+              const SizedBox(height: 15),
+            ],
+            TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email)), keyboardType: TextInputType.emailAddress),
+            const SizedBox(height: 15),
+            TextField(controller: _senhaCtrl, decoration: const InputDecoration(labelText: "Senha", prefixIcon: Icon(Icons.lock)), obscureText: true),
             const SizedBox(height: 30),
             SizedBox(
               width: double.infinity,
               height: 55,
               child: ElevatedButton(
-                onPressed: () {
-                  if (controller.text.length == 5) {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => MapaClienteScreen(codigo: controller.text)));
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                  textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
-                ),
-                child: const Text("RASTREAR AGORA"),
+                onPressed: _isLoading ? null : _acaoAutenticacao,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+                child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : Text(isLogin ? "ENTRAR" : "CRIAR CONTA"),
               ),
-            )
+            ),
           ],
         ),
       ),
@@ -484,110 +447,142 @@ class ClienteLoginScreen extends StatelessWidget {
   }
 }
 
-// --- TELA DO CLIENTE (MAPA E CÁLCULO DE ETA) ---
-class MapaClienteScreen extends StatefulWidget {
-  final String codigo;
-  const MapaClienteScreen({super.key, required this.codigo});
+// ============================================================================
+// TELA 3: LOGIN DO VENDEDOR
+// ============================================================================
+
+class VendedorLoginScreen extends StatefulWidget {
+  const VendedorLoginScreen({super.key});
 
   @override
-  State<MapaClienteScreen> createState() => _MapaClienteScreenState();
+  State<VendedorLoginScreen> createState() => _VendedorLoginScreenState();
 }
 
-class _MapaClienteScreenState extends State<MapaClienteScreen> {
-  // Controle do Mapa
-  final MapController _mapController = MapController();
-  
-  // Estado
-  LatLng? _posicaoMoto;
-  LatLng? _minhaPosicao;
-  Timer? _timerPolling;
-  
-  // Variáveis de info
-  bool _ativo = true;
-  String _statusTxt = "Localizando motoboy...";
-  String _distanciaTxt = "-- km";
-  String _tempoTxt = "-- min";
-  
-  // TRAVA DE SEGURANÇA DO MAPA
-  bool _mapaPronto = false; 
-  
-  // Alternador de Seguir
-  bool _seguirMoto = true; 
+class _VendedorLoginScreenState extends State<VendedorLoginScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final _emailCtrl = TextEditingController();
+  final _senhaCtrl = TextEditingController();
+  final _nomeCtrl = TextEditingController();
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _pegarMinhaLocalizacao();
-    _atualizarPosicaoMoto();
-    
-    _timerPolling = Timer.periodic(const Duration(seconds: 3), (timer) {
-      _atualizarPosicaoMoto();
-    });
+    _tabController = TabController(length: 2, vsync: this);
+    _verificarLoginSalvo();
   }
 
-  Future<void> _pegarMinhaLocalizacao() async {
-    if (await Permission.location.request().isGranted) {
-      Position pos = await Geolocator.getCurrentPosition();
-      if (mounted) {
-        setState(() {
-          _minhaPosicao = LatLng(pos.latitude, pos.longitude);
-        });
-      }
+  Future<void> _verificarLoginSalvo() async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString('vendedor_id');
+    final nome = prefs.getString('vendedor_nome');
+    if (id != null && mounted) {
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => VendedorDashboardScreen(id: id, nome: nome ?? "Vendedor")));
     }
   }
 
-  Future<void> _atualizarPosicaoMoto() async {
-    if (!mounted) return;
+  Future<void> _acaoAutenticacao() async {
+    if (_emailCtrl.text.isEmpty || _senhaCtrl.text.isEmpty) return;
+    setState(() => _isLoading = true);
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/ler_posicao.php?codigo=${widget.codigo}'));
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        if (data['status'] == 'ativo') {
-          LatLng novaPos = LatLng(data['lat'], data['lng']);
-          
-          setState(() {
-            _posicaoMoto = novaPos;
-            _statusTxt = "Em trânsito";
-            _calcularEstimativa();
-          });
-
-          if (_seguirMoto && _mapaPronto) {
-            _mapController.move(novaPos, _mapController.camera.zoom);
-          }
-
-        } else {
-          setState(() {
-            _ativo = false;
-            _statusTxt = "Entrega finalizada.";
-            _tempoTxt = "Finalizado";
-          });
-          _timerPolling?.cancel();
-        }
-      }
-    } catch (e) {
-      print("Erro de rede ignorado: $e");
-    }
+      final isLogin = _tabController.index == 0;
+      final endpoint = isLogin ? 'login_vendedor.php' : 'cadastro_vendedor.php';
+      final response = await http.post(Uri.parse('$baseUrl/$endpoint'), body: { 'email': _emailCtrl.text, 'senha': _senhaCtrl.text, if (!isLogin) 'nome': _nomeCtrl.text });
+      dynamic data; try { data = jsonDecode(response.body); } catch (e) { throw Exception("Erro servidor."); }
+      if (data['status'] == 'sucesso') {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('vendedor_id', data['id']); await prefs.setString('vendedor_nome', data['nome']);
+        if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => VendedorDashboardScreen(id: data['id'], nome: data['nome'])));
+      } else { throw Exception(data['msg']); }
+    } catch (e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red)); } 
+    finally { if(mounted) setState(() => _isLoading = false); }
   }
 
-  void _calcularEstimativa() {
-    if (_posicaoMoto != null && _minhaPosicao != null) {
-      final Distance distance = const Distance();
-      double kmReto = distance.as(LengthUnit.Kilometer, _posicaoMoto!, _minhaPosicao!);
-      
-      double kmReal = kmReto * 1.4;
-      double horas = kmReal / 30.0;
-      int minutos = (horas * 60).round();
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(title: const Text("Vendedor")),
+      body: Column(
+        children: [
+          TabBar(
+            controller: _tabController,
+            labelColor: Colors.orange,
+            unselectedLabelColor: Colors.grey,
+            indicatorColor: Colors.orange,
+            indicatorSize: TabBarIndicatorSize.tab,
+            tabs: const [Tab(text: "JÁ TENHO CONTA"), Tab(text: "CRIAR NOVA")],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildForm(isLogin: true),
+                _buildForm(isLogin: false),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-      if (minutos < 1) minutos = 1;
+  Widget _buildForm({required bool isLogin}) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            if (!isLogin) ...[
+              TextField(controller: _nomeCtrl, decoration: const InputDecoration(labelText: "Nome da Loja", prefixIcon: Icon(Icons.store))),
+              const SizedBox(height: 15),
+            ],
+            TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email)), keyboardType: TextInputType.emailAddress),
+            const SizedBox(height: 15),
+            TextField(controller: _senhaCtrl, decoration: const InputDecoration(labelText: "Senha", prefixIcon: Icon(Icons.lock)), obscureText: true),
+            const SizedBox(height: 30),
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _acaoAutenticacao,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white),
+                child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : Text(isLogin ? "ENTRAR" : "CRIAR CONTA"),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
-      setState(() {
-        _distanciaTxt = "${kmReal.toStringAsFixed(1)} km";
-        _tempoTxt = "$minutos min";
-      });
-    }
+// ============================================================================
+// TELA 4: DASHBOARD DO VENDEDOR
+// ============================================================================
+
+class VendedorDashboardScreen extends StatefulWidget {
+  final String id;
+  final String nome;
+  const VendedorDashboardScreen({super.key, required this.id, required this.nome});
+
+  @override
+  State<VendedorDashboardScreen> createState() => _VendedorDashboardScreenState();
+}
+
+class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
+  List<dynamic> _motoboys = [];
+  bool _isLoadingInicial = true;
+  Timer? _timerPolling;
+
+  @override
+  void initState() {
+    super.initState();
+    _carregarDados();
+    _timerPolling = Timer.periodic(const Duration(seconds: 5), (timer) {
+      _carregarDados(silencioso: true);
+    });
   }
 
   @override
@@ -596,131 +591,546 @@ class _MapaClienteScreenState extends State<MapaClienteScreen> {
     super.dispose();
   }
 
+  Future<void> _carregarDados({bool silencioso = false}) async {
+    if (!silencioso) setState(() => _isLoadingInicial = true);
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/listar_motoboys.php?vendedor_id=${widget.id}'));
+      if (response.statusCode == 200) {
+        try {
+          final data = jsonDecode(response.body);
+          if (mounted) {
+            setState(() {
+              _motoboys = data;
+              _isLoadingInicial = false;
+            });
+          }
+        } catch (e) {
+          // Ignora
+        }
+      }
+    } catch (e) {}
+  }
+
+  Future<void> _vincularMotoboy() async {
+    final controller = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) => CustomDialog(
+        title: "Adicionar Motoboy",
+        icon: Icons.add_reaction_rounded,
+        color: Colors.blue,
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            prefixText: "ENT-", 
+            hintText: "1234567",
+            labelText: "ID do Entregador",
+            counterText: ""
+          ),
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(7)],
+        ),
+        actions: [
+          OutlinedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          ElevatedButton(
+            onPressed: () async {
+              if (controller.text.isNotEmpty) {
+                Navigator.pop(ctx);
+                try {
+                  final resp = await http.post(Uri.parse('$baseUrl/vincular.php'), body: {
+                    'vendedor_id': widget.id,
+                    'motoboy_id': "ENT-${controller.text}"
+                  });
+                  final data = jsonDecode(resp.body);
+                  _carregarDados(); 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['msg']), backgroundColor: data['status'] == 'sucesso' ? Colors.green : Colors.red));
+                } catch(e) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Erro ao vincular"), backgroundColor: Colors.red));
+                }
+              }
+            },
+            child: const Text("Vincular"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _desvincular(String alvoId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => CustomDialog(
+        title: "Remover Entregador?",
+        icon: Icons.warning_amber_rounded,
+        color: Colors.red,
+        content: const Text("O entregador perderá o acesso à sua lista de lojas.", textAlign: TextAlign.center),
+        actions: [
+          OutlinedButton(onPressed: ()=>Navigator.pop(ctx,false), child: const Text("Cancelar")),
+          ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), onPressed: ()=>Navigator.pop(ctx,true), child: const Text("Remover"))
+        ]
+      )
+    );
+    if (confirm == true) {
+      try {
+        await http.post(Uri.parse('$baseUrl/desvincular.php'), body: { 'tipo': 'vendedor', 'meu_id': widget.id, 'alvo_id': alvoId });
+        _carregarDados();
+      } catch (e) {}
+    }
+  }
+
+  void _mostrarDetalhesEntrega(Map<String, dynamic> moto) {
+    if (moto['online'] != true) return;
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => CustomDialog(
+        title: "Em Rota",
+        icon: Icons.delivery_dining,
+        color: Colors.green,
+        content: Column(
+          children: [
+            const Text("Pedido:", style: TextStyle(color: Colors.grey)),
+            Text(moto['pedido'] ?? "S/N", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
+            const Text("Código de Rastreio:", style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 5),
+            GestureDetector(
+              onTap: () {
+                 Clipboard.setData(ClipboardData(text: moto['rastreio']));
+                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Código copiado!")));
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.blue.withOpacity(0.3))),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(moto['rastreio'] ?? "", style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blue)),
+                    const SizedBox(width: 10),
+                    const Icon(Icons.copy, size: 20, color: Colors.blue)
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text("Envie para o cliente", style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+        actions: [
+          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Fechar"))
+        ],
+      ),
+    );
+  }
+
+  Future<void> _copiarID() async {
+    await Clipboard.setData(ClipboardData(text: widget.id));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID copiado!"), duration: Duration(seconds: 1)));
+  }
+
+  Future<void> _logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('vendedor_id');
+    await prefs.remove('vendedor_nome');
+    if(mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MenuScreen()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(title: Text(widget.nome), actions: [IconButton(icon: const Icon(Icons.exit_to_app), onPressed: _logout)]),
+      body: RefreshIndicator(
+        onRefresh: () async { await _carregarDados(); },
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]),
+                child: Column(
+                  children: [
+                    const Text("SEU ID DE VENDEDOR", style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 5),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: SelectableText(widget.id, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 1)))),
+                        const SizedBox(width: 8),
+                        IconButton(onPressed: _copiarID, icon: const Icon(Icons.copy, color: Colors.white), constraints: const BoxConstraints(), padding: EdgeInsets.zero),
+                      ],
+                    ),
+                    const Text("Compartilhe com seus entregadores", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 30),
+              
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text("Meus Entregadores", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                TextButton.icon(onPressed: _vincularMotoboy, icon: const Icon(Icons.add, size: 18), label: const Text("Adicionar"))
+              ]),
+              
+              const SizedBox(height: 10),
+              
+              if (_isLoadingInicial)
+                const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
+              else if (_motoboys.isEmpty)
+                const Center(child: Padding(padding: EdgeInsets.all(40.0), child: Text("Nenhum entregador vinculado.", style: TextStyle(color: Colors.grey))))
+              else
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _motoboys.length,
+                  itemBuilder: (context, index) {
+                    final moto = _motoboys[index];
+                    final isOnline = moto['online'] == true;
+                    
+                    return Card(
+                      elevation: 0,
+                      color: isOnline ? Colors.green[50] : Colors.white,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: isOnline ? Colors.green.withOpacity(0.3) : Colors.grey.shade200)),
+                      child: ListTile(
+                        onTap: () => _mostrarDetalhesEntrega(moto),
+                        leading: CircleAvatar(backgroundColor: isOnline ? Colors.green[100] : Colors.grey[100], child: Icon(Icons.two_wheeler, color: isOnline ? Colors.green[800] : Colors.grey)),
+                        title: Text(moto['nome'] ?? "Entregador", style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text("ID: ${moto['id']}", style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if(isOnline) Container(margin: const EdgeInsets.only(right: 10), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(10)), child: const Text("EM ROTA", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))),
+                            IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => _desvincular(moto['id']))
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// TELA 5: PAINEL DO ENTREGADOR
+// ============================================================================
+
+class MotoboyScreen extends StatefulWidget {
+  final bool autoRestaurar;
+  const MotoboyScreen({super.key, this.autoRestaurar = false});
+  @override State<MotoboyScreen> createState() => _MotoboyScreenState();
+}
+
+class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserver {
+  String? _codigoSessao;
+  String? _motoboyId;
+  String? _motoboyNome;
+  bool _isLoading = false;
+  bool _modoMultiplo = false;
+  int _totalEntregas = 1;
+  int _entregasConcluidas = 0;
+
+  @override void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); _carregarDados(); _checkPermissions(); if (widget.autoRestaurar) _restaurarEstadoLocal(); }
+  @override void dispose() { WidgetsBinding.instance.removeObserver(this); super.dispose(); }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) { if (state == AppLifecycleState.detached) { final s = FlutterBackgroundService(); s.invoke("stopService"); } }
+
+  Future<void> _carregarDados() async { final p = await SharedPreferences.getInstance(); setState(() { _motoboyId = p.getString('motoboy_id'); _motoboyNome = p.getString('motoboy_nome'); }); }
+  Future<List<dynamic>> _buscarVendedores() async { if(_motoboyId==null)return[]; try { final r = await http.get(Uri.parse('$baseUrl/listar_vendedores.php?motoboy_id=$_motoboyId')); if(r.statusCode==200) return jsonDecode(r.body); } catch(e){} return []; }
+  
+  Future<void> _vincularVendedor() async {
+    final controller = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) => CustomDialog(
+        title: "Vincular Vendedor",
+        icon: Icons.store,
+        color: Colors.blue,
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(prefixText: "VEND-", hintText: "1234567", labelText: "ID da Loja", counterText: ""),
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(7)],
+        ),
+        actions: [
+          OutlinedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          ElevatedButton(
+            onPressed: () async {
+              if (controller.text.isNotEmpty) {
+                Navigator.pop(ctx);
+                try {
+                  final resp = await http.post(Uri.parse('$baseUrl/vincular.php'), body: {
+                    'motoboy_id': _motoboyId,
+                    'vendedor_id': "VEND-${controller.text}"
+                  });
+                  final data = jsonDecode(resp.body);
+                  setState(() {}); 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['msg']), backgroundColor: data['status']=='sucesso'?Colors.green:Colors.red));
+                } catch(e) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Erro ao conectar"), backgroundColor: Colors.red));
+                }
+              }
+            },
+            child: const Text("Conectar"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _desvincular(String alvoId) async {
+    final confirm = await showDialog<bool>(context: context, builder: (ctx) => CustomDialog(title: "Remover Loja?", icon: Icons.delete_forever, color: Colors.red, content: const Text("Você deixará de aparecer para esta loja.", textAlign: TextAlign.center), actions: [OutlinedButton(onPressed: ()=>Navigator.pop(ctx,false), child: const Text("Não")), ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), onPressed: ()=>Navigator.pop(ctx,true), child: const Text("Sim"))]));
+    if (confirm == true) { try { await http.post(Uri.parse('$baseUrl/desvincular.php'), body: { 'tipo': 'motoboy', 'meu_id': _motoboyId, 'alvo_id': alvoId }); setState(() {}); } catch (e) {} }
+  }
+
+  Future<void> _copiarID() async { if (_motoboyId != null) { await Clipboard.setData(ClipboardData(text: _motoboyId!)); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID copiado!"), duration: Duration(seconds: 1))); } }
+  Future<void> _logout() async { if(_codigoSessao!=null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Finalize a entrega antes."), backgroundColor: Colors.red)); return; } final p=await SharedPreferences.getInstance(); await p.remove('motoboy_id'); await p.remove('motoboy_nome'); if(mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=>const MenuScreen())); }
+  Future<void> _checkPermissions() async { var s = await Permission.ignoreBatteryOptimizations.status; if (!s.isGranted) await Permission.ignoreBatteryOptimizations.request(); }
+  
+  Future<void> _configurarRota(int qtd) async {
+    final vendedores = await _buscarVendedores(); 
+    if (vendedores.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vincule-se a uma loja primeiro."), backgroundColor: Colors.orange));
+      return;
+    }
+    String? vendedorSelecionado = vendedores.first['id'];
+    final pedidoController = TextEditingController();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => CustomDialog(
+        title: "Dados da Entrega",
+        icon: Icons.assignment,
+        color: Colors.blue,
+        content: Column(
+          children: [
+            DropdownButtonFormField<String>(
+              value: vendedorSelecionado,
+              items: vendedores.map<DropdownMenuItem<String>>((v) => DropdownMenuItem(value: v['id'], child: Text(v['nome'], overflow: TextOverflow.ellipsis))).toList(),
+              onChanged: (val) => vendedorSelecionado = val,
+              decoration: const InputDecoration(labelText: "Loja Parceira"),
+              isExpanded: true,
+            ),
+            const SizedBox(height: 15),
+            TextField(
+              controller: pedidoController,
+              decoration: const InputDecoration(labelText: "Número do Pedido", hintText: "Ex: 12345"),
+              keyboardType: TextInputType.number,
+            )
+          ],
+        ),
+        actions: [
+          OutlinedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          ElevatedButton(
+            onPressed: () {
+              if (pedidoController.text.isNotEmpty && vendedorSelecionado != null) {
+                Navigator.pop(ctx);
+                _iniciarSessao(qtd, vendedorSelecionado!, pedidoController.text);
+              }
+            },
+            child: const Text("INICIAR"),
+          )
+        ],
+      )
+    );
+  }
+
+  Future<void> _iniciarSessao(int qtd, String vendedorId, String pedidoId) async {
+    setState(() => _isLoading = true);
+    await Permission.notification.request();
+    var statusLoc = await Permission.location.request();
+    if (await Permission.locationAlways.isDenied) await Permission.locationAlways.request();
+
+    if (statusLoc.isGranted) {
+      try {
+        Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+        String novoCodigo = List.generate(5, (index) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Random().nextInt(36)]).join();
+        var response = await http.post(Uri.parse('$baseUrl/criar_sessao.php'), body: { 'codigo': novoCodigo, 'lat': pos.latitude.toString(), 'lng': pos.longitude.toString(), 'motoboy_id': _motoboyId, 'vendedor_id': vendedorId, 'pedido_id': pedidoId });
+        if (response.statusCode == 200) {
+             setState(() { _codigoSessao = novoCodigo; _totalEntregas = qtd; _entregasConcluidas = 0; _modoMultiplo = qtd > 1; _isLoading = false; });
+            _salvarProgresso();
+            final service = FlutterBackgroundService(); await service.startService(); service.invoke("startTracking", {'codigo': novoCodigo});
+        } else { setState(() => _isLoading = false); }
+      } catch (e) { setState(() => _isLoading = false); }
+    } else { setState(() => _isLoading = false); }
+  }
+
+  Future<void> _restaurarEstadoLocal() async {
+    setState(() => _isLoading = true); final p = await SharedPreferences.getInstance(); final c = p.getString('sessao_codigo');
+    if (c != null) {
+      setState(() { _codigoSessao = c; _totalEntregas = p.getInt('sessao_total')??1; _entregasConcluidas = p.getInt('sessao_concluidas')??0; _modoMultiplo = p.getBool('sessao_multipla')??false; _isLoading = false; });
+      final s = FlutterBackgroundService(); if (!(await s.isRunning())) await s.startService(); s.invoke("startTracking", {'codigo': _codigoSessao});
+    } else { setState(() => _isLoading = false); }
+  }
+  Future<void> _salvarProgresso() async { final p = await SharedPreferences.getInstance(); await p.setString('sessao_codigo', _codigoSessao!); await p.setInt('sessao_total', _totalEntregas); await p.setInt('sessao_concluidas', _entregasConcluidas); await p.setBool('sessao_multipla', _modoMultiplo); }
+  Future<void> _limparMemoria() async { final p = await SharedPreferences.getInstance(); await p.remove('sessao_codigo'); await p.remove('sessao_total'); await p.remove('sessao_concluidas'); await p.remove('sessao_multipla'); }
+  Future<void> _finalizarTotalmente() async { if (_codigoSessao != null) { final s = FlutterBackgroundService(); s.invoke("stopService", {'codigo': _codigoSessao}); } await _limparMemoria(); setState(() { _codigoSessao = null; }); }
+  void _concluirEtapa() { if (_entregasConcluidas < _totalEntregas - 1) { setState(() { _entregasConcluidas++; }); _salvarProgresso(); } else { _finalizarTotalmente(); } }
+  void _perguntarQtd() { final c = TextEditingController(); showDialog(context: context, builder: (ctx) => CustomDialog(title: "Quantas Entregas?", content: TextField(controller: c, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: "Ex: 3", labelText: "Quantidade")), actions: [OutlinedButton(onPressed: ()=>Navigator.pop(ctx), child: const Text("Cancelar")), ElevatedButton(onPressed: (){ if(c.text.isNotEmpty) { Navigator.pop(ctx); _configurarRota(int.parse(c.text)); } }, child: const Text("Continuar"))])); }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_codigoSessao != null) return _buildPainelAtivo();
+
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(title: const Text("Painel Entregador"), actions: [IconButton(icon: const Icon(Icons.exit_to_app), onPressed: _logout)]),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity, padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.blue[800], borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 10, offset: const Offset(0,5))]),
+              child: Column(children: [
+                const Text("SEU ID DE ENTREGADOR", style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 5),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: SelectableText(_motoboyId ?? "...", style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)))), const SizedBox(width: 8), IconButton(onPressed: _copiarID, icon: const Icon(Icons.copy, color: Colors.white), padding: EdgeInsets.zero, constraints: const BoxConstraints())]),
+                Text(_motoboyNome ?? "", style: const TextStyle(color: Colors.white, fontSize: 16)),
+              ]),
+            ),
+            const SizedBox(height: 30),
+            const Text("Iniciar Nova Rota", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: _btnOpcao("Única", Icons.person, Colors.blue, () => _configurarRota(1))),
+              const SizedBox(width: 10),
+              Expanded(child: _btnOpcao("Múltipla", Icons.alt_route, Colors.orange, _perguntarQtd)),
+            ]),
+            const SizedBox(height: 30),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Lojas Vinculadas", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), TextButton.icon(onPressed: _vincularVendedor, icon: const Icon(Icons.add), label: const Text("Adicionar"))]),
+            FutureBuilder<List<dynamic>>(
+              future: _buscarVendedores(),
+              builder: (ctx, snap) {
+                if (!snap.hasData || snap.data!.isEmpty) return const Padding(padding: EdgeInsets.all(20), child: Text("Nenhuma loja vinculada."));
+                return ListView.builder(
+                  shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: snap.data!.length,
+                  itemBuilder: (c, i) => Card(child: ListTile(leading: const Icon(Icons.store), title: Text(snap.data![i]['nome']), subtitle: Text(snap.data![i]['id']), trailing: IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => _desvincular(snap.data![i]['id']))))
+                );
+              }
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _btnOpcao(String t, IconData i, Color c, VoidCallback f) {
+    return InkWell(onTap: f, child: Container(padding: const EdgeInsets.symmetric(vertical: 20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade200)), child: Column(children: [Icon(i, color: c, size: 30), const SizedBox(height: 5), Text(t, style: const TextStyle(fontWeight: FontWeight.bold))])));
+  }
+
+  Widget _buildPainelAtivo() {
+    int atual = _entregasConcluidas + 1; bool isUltima = atual == _totalEntregas;
+    return Scaffold(
+      appBar: AppBar(title: const Text("Em Entrega"), automaticallyImplyLeading: false),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Container(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8), decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.green)), child: const Text("RASTREIO ATIVO", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold))),
+            const SizedBox(height: 30),
+            FittedBox(child: SelectableText(_codigoSessao!, style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, letterSpacing: 3))),
+            const Text("Código do Cliente"),
+            const SizedBox(height: 40),
+            if(_modoMultiplo) ...[Text("Entrega $atual de $_totalEntregas", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 10), LinearProgressIndicator(value: atual/_totalEntregas, minHeight: 8, borderRadius: BorderRadius.circular(4)), const SizedBox(height: 30)],
+            SizedBox(width: double.infinity, height: 60, child: ElevatedButton(onPressed: _concluirEtapa, style: ElevatedButton.styleFrom(backgroundColor: isUltima?Colors.red:Colors.blue, foregroundColor: Colors.white), child: Text(isUltima ? "FINALIZAR TUDO" : "CONCLUIR ENTREGA ATUAL"))),
+            if(!isUltima) Padding(padding: const EdgeInsets.only(top: 15), child: TextButton(onPressed: _finalizarTotalmente, child: const Text("Cancelar e Encerrar Tudo", style: TextStyle(color: Colors.red))))
+          ]),
+        ),
+      )
+    );
+  }
+}
+
+// ============================================================================
+// TELA 6: CLIENTE - LOGIN DO RASTREIO
+// ============================================================================
+
+class ClienteLoginScreen extends StatelessWidget {
+  const ClienteLoginScreen({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final controller = TextEditingController();
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(title: const Text("Rastrear Pedido"), centerTitle: true),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text("Código de Rastreio", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
+            TextField(controller: controller, textAlign: TextAlign.center, textCapitalization: TextCapitalization.characters, maxLength: 5, style: const TextStyle(fontSize: 32, letterSpacing: 5, fontWeight: FontWeight.bold), decoration: const InputDecoration(hintText: "A1B2C", counterText: "")),
+            const SizedBox(height: 30),
+            SizedBox(width: double.infinity, height: 55, child: ElevatedButton(onPressed: () { if (controller.text.length == 5) Navigator.push(context, MaterialPageRoute(builder: (_) => MapaClienteScreen(codigo: controller.text.toUpperCase()))); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))), child: const Text("RASTREAR AGORA")))
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class MapaClienteScreen extends StatefulWidget {
+  final String codigo;
+  const MapaClienteScreen({super.key, required this.codigo});
+  @override State<MapaClienteScreen> createState() => _MapaClienteScreenState();
+}
+
+class _MapaClienteScreenState extends State<MapaClienteScreen> {
+  final MapController _mapController = MapController();
+  LatLng? _posicaoMoto;
+  Timer? _timerPolling;
+  String _statusTxt = "Localizando entregador...";
+  bool _ativo = true;
+  bool _seguirMoto = true;
+  bool _mapaPronto = false;
+
+  @override void initState() { super.initState(); _atualizarPosicaoMoto(); _timerPolling = Timer.periodic(const Duration(seconds: 3), (timer) { _atualizarPosicaoMoto(); }); }
+  @override void dispose() { _timerPolling?.cancel(); super.dispose(); }
+
+  Future<void> _atualizarPosicaoMoto() async {
+    if (!mounted) return;
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/ler_posicao.php?codigo=${widget.codigo}'));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['status'] == 'ativo') {
+          LatLng novaPos = LatLng(data['lat'], data['lng']);
+          setState(() { _posicaoMoto = novaPos; _statusTxt = "Em trânsito"; });
+          if (_seguirMoto && _mapaPronto) _mapController.move(novaPos, _mapController.camera.zoom);
+        } else {
+          setState(() { _ativo = false; _statusTxt = "Entrega finalizada."; });
+          _timerPolling?.cancel();
+        }
+      }
+    } catch (e) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text("Pedido #${widget.codigo}")),
-      body: Stack(
-        children: [
-          // MAPA
-          if (_posicaoMoto != null)
-             FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _posicaoMoto!,
-                initialZoom: 16.0,
-                onMapReady: () {
-                  _mapaPronto = true;
-                },
-                onPositionChanged: (pos, hasGesture) {
-                  if (hasGesture) {
-                    setState(() => _seguirMoto = false);
-                  }
-                },
+      body: _posicaoMoto == null
+          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(!_ativo?Icons.check_circle:Icons.search, size: 60, color: !_ativo?Colors.green:Colors.blue), const SizedBox(height: 10), Text(_statusTxt)]))
+          : Stack(children: [
+              FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(initialCenter: _posicaoMoto!, initialZoom: 16.0, onMapReady: () => _mapaPronto = true, onPositionChanged: (pos, hasGesture) { if (hasGesture) setState(() => _seguirMoto = false); }),
+                children: [
+                  TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.meindica.rastreio'),
+                  MarkerLayer(markers: [Marker(point: _posicaoMoto!, width: 80, height: 80, child: const Column(children: [Icon(Icons.delivery_dining, color: Colors.red, size: 50), Text("Moto", style: TextStyle(fontWeight: FontWeight.bold, backgroundColor: Colors.white))]))]),
+                ],
               ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.meindica.rastreio',
-                ),
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _posicaoMoto!,
-                      width: 80,
-                      height: 80,
-                      child: const Column(
-                        children: [
-                          Icon(Icons.delivery_dining, color: Colors.red, size: 50),
-                          Text("Moto", style: TextStyle(fontWeight: FontWeight.bold, backgroundColor: Colors.white)),
-                        ],
-                      ),
-                    ),
-                    if (_minhaPosicao != null)
-                      Marker(
-                        point: _minhaPosicao!,
-                        width: 60,
-                        height: 60,
-                        child: const Icon(Icons.person_pin_circle, color: Colors.blue, size: 40),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-            
-          if (_posicaoMoto != null && _ativo)
-            Positioned(
-              right: 20,
-              bottom: 140,
-              child: FloatingActionButton(
-                backgroundColor: _seguirMoto ? Colors.blue : Colors.white,
-                child: Icon(Icons.gps_fixed, color: _seguirMoto ? Colors.white : Colors.grey),
-                onPressed: () {
-                  setState(() {
-                    _seguirMoto = !_seguirMoto;
-                    if (_seguirMoto && _posicaoMoto != null && _mapaPronto) {
-                      _mapController.move(_posicaoMoto!, 16.0);
-                    }
-                  });
-                },
-              ),
-            ),
-
-          if (_ativo && _posicaoMoto != null)
-            Positioned(
-              left: 10,
-              right: 10,
-              bottom: 20,
-              child: Card(
-                elevation: 10,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.access_time, color: Colors.blue),
-                          const SizedBox(height: 5),
-                          Text(_tempoTxt, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                          const Text("Previsão", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        ],
-                      ),
-                      Container(width: 1, height: 40, color: Colors.grey[300]),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.timeline, color: Colors.orange),
-                          const SizedBox(height: 5),
-                          Text(_distanciaTxt, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                          const Text("Distância", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-          if (_posicaoMoto == null || !_ativo)
-            Container(
-              color: Colors.white.withOpacity(0.95),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(!_ativo ? Icons.check_circle : Icons.search, 
-                         size: 60, color: !_ativo ? Colors.green : Colors.blue),
-                    const SizedBox(height: 10),
-                    Text(_statusTxt, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
+              if (_ativo) Positioned(right: 20, bottom: 40, child: FloatingActionButton(backgroundColor: _seguirMoto ? Colors.blue : Colors.white, child: Icon(Icons.gps_fixed, color: _seguirMoto ? Colors.white : Colors.grey), onPressed: () => setState(() { _seguirMoto = !_seguirMoto; if (_seguirMoto) _mapController.move(_posicaoMoto!, 16.0); })))
+            ]),
     );
   }
 }

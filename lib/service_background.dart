@@ -11,12 +11,11 @@ const String baseUrl = "https://meindicaalguem.com.br/api/rastreio";
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
 
-  // Configura o canal de notificação (Android)
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'my_foreground', 
     'Rastreio Ativo', 
     description: 'Canal de notificação do rastreio',
-    importance: Importance.low, 
+    importance: Importance.high, 
   );
 
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -27,16 +26,12 @@ Future<void> initializeService() async {
 
   await service.configure(
     androidConfiguration: AndroidConfiguration(
-      // Esta é a função que será executada
       onStart: onStart,
-      
-      // Importante: autoStart false para só ligar quando o motoboy clicar
       autoStart: false, 
       isForegroundMode: true,
-      
       notificationChannelId: 'my_foreground',
       initialNotificationTitle: 'Rastreio MeIndica',
-      initialNotificationContent: 'Inicializando GPS...',
+      initialNotificationContent: 'Aguardando início...',
       foregroundServiceNotificationId: 888,
     ),
     iosConfiguration: IosConfiguration(
@@ -46,28 +41,47 @@ Future<void> initializeService() async {
   );
 }
 
-// --- FUNÇÃO QUE RODA EM SEGUNDO PLANO ---
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
-  // Garante que o Dart esteja pronto
   DartPluginRegistrant.ensureInitialized();
   
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-
-  // Variáveis locais do serviço
   StreamSubscription<Position>? positionStream;
 
-  // Escuta o comando "stopService" vindo da tela
-  service.on('stopService').listen((event) {
+  // --- ESCUTA O COMANDO PARA PARAR TUDO ---
+  service.on('stopService').listen((event) async {
+    // 1. Tenta recuperar o código que veio da tela principal (se houver)
+    String? codigo = event?['codigo'];
+
+    // 2. Remove a notificação da bandeja imediatamente
+    await flutterLocalNotificationsPlugin.cancel(888);
+
+    // 3. Se um código foi passado, DELETA do banco.
+    // Se nenhum código foi passado (fechamento do app), MANTÉM no banco.
+    if (codigo != null) {
+        try {
+            await http.post(
+                Uri.parse('$baseUrl/finalizar.php'),
+                body: {'codigo': codigo},
+            );
+            print("Sessão $codigo destruída com sucesso.");
+        } catch (e) {
+            print("Erro ao finalizar no background: $e");
+        }
+    }
+
+    // 4. Encerra o serviço definitivamente (notificação some)
     service.stopSelf();
   });
 
-  // Escuta o comando "startTracking" vindo da tela
   service.on('startTracking').listen((event) async {
     if (event != null) {
       String codigo = event['codigo'];
       
-      // Atualiza a notificação para mostrar que está rodando
+      if (service is AndroidServiceInstance) {
+        service.setAsForegroundService();
+      }
+
       flutterLocalNotificationsPlugin.show(
         888,
         'Rastreio em Andamento',
@@ -76,13 +90,14 @@ void onStart(ServiceInstance service) async {
           android: AndroidNotificationDetails(
             'my_foreground',
             'Rastreio Ativo',
-            icon: 'ic_bg_service_small', // Ícone padrão do Android
+            icon: 'ic_bg_service_small', 
             ongoing: true,
+            priority: Priority.high,
+            visibility: NotificationVisibility.public,
           ),
         ),
       );
 
-      // Inicia o GPS aqui dentro do serviço
       const LocationSettings locationSettings = LocationSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 10, 
@@ -92,6 +107,13 @@ void onStart(ServiceInstance service) async {
         try {
           print("BACKGROUND: Enviando Lat: ${position.latitude}");
           
+          if (service is AndroidServiceInstance) {
+            service.setForegroundNotificationInfo(
+              title: "Rastreio #$codigo Ativo",
+              content: "Atualizado às ${DateTime.now().hour}:${DateTime.now().minute}",
+            );
+          }
+
           await http.post(
             Uri.parse('$baseUrl/atualizar_local.php'),
             body: {

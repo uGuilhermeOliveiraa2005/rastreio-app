@@ -45,5 +45,23 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Precisamos da sua localização para mostrar o rastreio em tempo real.</string>
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>Precisamos da sua localização em segundo plano para o cliente acompanhar o pedido mesmo com o app fechado.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>Precisamos da sua localização para o rastreio funcionar durante a entrega.</string>
+
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>location</string>
+        <string>fetch</string>
+        <string>processing</string>
+    </array>
+    
+    <key>bg_permission_handler_usage_description</key>
+    <string>O app precisa rodar em segundo plano para enviar a localização.</string>
+
 </dict>
 </plist>
