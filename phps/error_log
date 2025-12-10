@@ -1,0 +1,46 @@
+[02-Dec-2025 16:27:11 America/Sao_Paulo] PHP Warning:  Undefined array key "codigo" in /home/meindica/public_html/api/rastreio/finalizar.php on line 4
+[09-Dec-2025 21:23:05 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.motoboy_unique_id' in 'where clause' in /home/meindica/public_html/api/rastreio/listar_motoboys.php:26
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_motoboys.php(26): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_motoboys.php on line 26
+[09-Dec-2025 21:23:12 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.motoboy_unique_id' in 'where clause' in /home/meindica/public_html/api/rastreio/listar_motoboys.php:26
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_motoboys.php(26): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_motoboys.php on line 26
+[09-Dec-2025 21:23:15 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.motoboy_unique_id' in 'where clause' in /home/meindica/public_html/api/rastreio/listar_motoboys.php:26
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_motoboys.php(26): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_motoboys.php on line 26
+[09-Dec-2025 21:23:21 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.motoboy_unique_id' in 'where clause' in /home/meindica/public_html/api/rastreio/listar_motoboys.php:26
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_motoboys.php(26): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_motoboys.php on line 26
+[10-Dec-2025 15:05:15 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.data_inicio' in 'field list' in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php:27
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php(27): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php on line 27
+[10-Dec-2025 15:05:21 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.data_inicio' in 'field list' in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php:27
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php(27): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php on line 27
+[10-Dec-2025 15:17:21 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.data_inicio' in 'field list' in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php:40
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php(40): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php on line 40
+[10-Dec-2025 15:17:21 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.data_inicio' in 'field list' in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php:40
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php(40): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php on line 40
+[10-Dec-2025 15:20:50 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 's.data_inicio' in 'field list' in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php:40
+Stack trace:
+#0 /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php(40): mysqli->prepare('\r\n    SELECT \r\n...')
+#1 {main}
+  thrown in /home/meindica/public_html/api/rastreio/listar_entregas_ativas.php on line 40
