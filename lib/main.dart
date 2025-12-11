@@ -3,34 +3,38 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui'; // Necessário para efeitos visuais
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; 
-import 'package:http/http.dart' as http; 
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:local_auth/local_auth.dart'; // NOVA IMPORTAÇÃO
+
+// IMPORTS CORRETOS PARA LOCAL_AUTH v2.1.6+
+import 'package:local_auth/local_auth.dart';
+import 'package:local_auth_android/local_auth_android.dart';
+import 'package:local_auth_ios/local_auth_ios.dart';
 
 import 'service_background.dart';
 
 // ============================================================================
 // CONFIGURAÇÃO GERAL
 // ============================================================================
-const String baseUrl = "https://meindicaalguem.com.br/api/rastreio"; 
+const String baseUrl = "https://meindicaalguem.com.br/api/rastreio";
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // TRAVA O APP EM MODO RETRATO
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
 
-  await initializeService(); 
-  
+  await initializeService();
+
   runApp(const MyApp());
 }
 
@@ -47,23 +51,39 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        
+
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.white,
           elevation: 0,
           centerTitle: true,
           iconTheme: IconThemeData(color: Colors.black),
-          titleTextStyle: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 18),
+          titleTextStyle: TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
+          ),
         ),
 
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.grey[100],
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Colors.blue, width: 2)),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: const BorderSide(color: Colors.blue, width: 2),
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 16,
+          ),
           labelStyle: TextStyle(color: Colors.grey[600]),
         ),
 
@@ -71,8 +91,13 @@ class MyApp extends StatelessWidget {
           style: ElevatedButton.styleFrom(
             elevation: 0,
             padding: const EdgeInsets.symmetric(vertical: 15),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-            textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
+            ),
+            textStyle: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
           ),
         ),
       ),
@@ -82,60 +107,54 @@ class MyApp extends StatelessWidget {
 }
 
 // ============================================================================
-// SERVIÇO DE BIOMETRIA (HELPER)
+// SERVIÇO DE BIOMETRIA (AJUSTADO PARA v2.1.6)
 // ============================================================================
 class BiometriaService {
   static final LocalAuthentication auth = LocalAuthentication();
 
   static Future<bool> autenticar(BuildContext context) async {
     try {
-      // Verifica se o hardware suporta
       final bool canAuthenticateWithBiometrics = await auth.canCheckBiometrics;
       final bool canAuthenticate =
           canAuthenticateWithBiometrics || await auth.isDeviceSupported();
 
-      // Se o dispositivo não tem hardware de biometria nem suporte básico, deixa passar.
-      if (!canAuthenticate) return true;
+      // Se o dispositivo não suporta nenhuma segurança (sem hardware ou sem PIN configurado),
+      // retorna false para forçar o uso da senha do app (login tradicional).
+      if (!canAuthenticate) return false;
 
       try {
+        // A mágica acontece aqui: biometricOnly: false permite PIN/Senha do celular
         final bool didAuthenticate = await auth.authenticate(
-          localizedReason: 'Por favor, autentique-se para continuar',
+          localizedReason: 'Confirme sua identidade',
           options: const AuthenticationOptions(
             useErrorDialogs: true,
             stickyAuth: true,
-            biometricOnly: false, // Permite PIN/Senha se biometria falhar
+            biometricOnly:
+                false, // <-- IMPORTANTE: Permite usar PIN/Padrão se digital falhar
           ),
+          authMessages: const <AuthMessages>[
+            AndroidAuthMessages(
+              signInTitle: 'Autenticação',
+              cancelButton: 'Senha',
+            ),
+            IOSAuthMessages(cancelButton: 'Usar Senha do App'),
+          ],
         );
         return didAuthenticate;
-        
       } on PlatformException catch (e) {
-        print("Erro Biometria Interno: ${e.code} - ${e.message}");
-        
-        // TRATAMENTO DE ERROS ESPECÍFICOS PARA NÃO BLOQUEAR O USUÁRIO
-        // 'NotAvailable': O dispositivo não tem segurança configurada (sem PIN/Padrão).
-        // 'NotEnrolled': O usuário não cadastrou digitais/face.
-        // 'no_biometric_hardware': Dispositivo sem sensor.
-        if (e.code == 'NotAvailable' || 
-            e.code == 'NotEnrolled' || 
-            e.code == 'no_biometric_hardware') {
-          // Se não tem segurança configurada no Android, permitimos o acesso
-          // pois não há como autenticar.
-          return true; 
-        }
-        
-        // Outros erros (ex: usuário cancelou, muitas tentativas falhas) retornam false
+        // Se der erro (ex: não tem senha no celular ou user cancelou), retorna false
+        // O usuário verá o formulário de login normal.
+        print("Erro Biometria: ${e.code}");
         return false;
       }
     } catch (e) {
-      print("Erro Genérico Biometria: $e");
-      // Em caso de erro desconhecido, por segurança, retorna false (ou true se preferir não bloquear)
-      return false; 
+      return false;
     }
   }
 }
 
 // ============================================================================
-// WIDGET: CUSTOM DIALOG (MODAL BONITO)
+// WIDGET: CUSTOM DIALOG
 // ============================================================================
 class CustomDialog extends StatelessWidget {
   final String title;
@@ -159,7 +178,7 @@ class CustomDialog extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.white,
-      child: SingleChildScrollView( // Protege contra overflow do teclado
+      child: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
@@ -177,7 +196,11 @@ class CustomDialog extends StatelessWidget {
               Text(
                 title,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
               ),
               const SizedBox(height: 16),
               content,
@@ -212,7 +235,6 @@ class MenuScreen extends StatefulWidget {
 }
 
 class _MenuScreenState extends State<MenuScreen> {
-  
   @override
   void initState() {
     super.initState();
@@ -223,8 +245,33 @@ class _MenuScreenState extends State<MenuScreen> {
 
   Future<void> _verificarSessaoGlobal() async {
     final prefs = await SharedPreferences.getInstance();
-    final codigoSalvo = prefs.getString('sessao_codigo');
 
+    // LOGIN AUTOMÁTICO
+    final motoboyId = prefs.getString('motoboy_id');
+    final vendedorId = prefs.getString('vendedor_id');
+
+    if (motoboyId != null && mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const MotoboyScreen(autoRestaurar: true),
+        ),
+      );
+      return;
+    }
+    if (vendedorId != null && mounted) {
+      final nome = prefs.getString('vendedor_nome') ?? "Vendedor";
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VendedorDashboardScreen(id: vendedorId, nome: nome),
+        ),
+      );
+      return;
+    }
+
+    // RECUPERAÇÃO DE CRASH
+    final codigoSalvo = prefs.getString('sessao_codigo');
     if (codigoSalvo != null && mounted) {
       showDialog(
         context: context,
@@ -240,21 +287,29 @@ class _MenuScreenState extends State<MenuScreen> {
           ),
           actions: [
             OutlinedButton(
-              onPressed: () { Navigator.pop(ctx); _descartarSessao(codigoSalvo); },
+              onPressed: () {
+                Navigator.pop(ctx);
+                _descartarSessao(codigoSalvo);
+              },
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 side: BorderSide(color: Colors.red.withOpacity(0.5)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
-              child: const Text("Descartar", style: TextStyle(color: Colors.red)),
+              child: const Text(
+                "Descartar",
+                style: TextStyle(color: Colors.red),
+              ),
             ),
             ElevatedButton(
-              onPressed: () { 
-                Navigator.pop(ctx); 
-                _direcionarMotoboy(autoRestaurar: true); 
+              onPressed: () {
+                Navigator.pop(ctx);
+                _direcionarMotoboy(autoRestaurar: true);
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue, 
+                backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
@@ -267,7 +322,14 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   Future<void> _descartarSessao(String codigo) async {
-    try { await http.post(Uri.parse('$baseUrl/finalizar.php'), body: {'codigo': codigo}); } catch (e) { print("Erro rede: $e"); }
+    try {
+      await http.post(
+        Uri.parse('$baseUrl/finalizar.php'),
+        body: {'codigo': codigo},
+      );
+    } catch (e) {
+      print("Erro rede: $e");
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('sessao_codigo');
     await prefs.remove('sessao_total');
@@ -275,26 +337,13 @@ class _MenuScreenState extends State<MenuScreen> {
     await prefs.remove('sessao_multipla');
   }
 
-  Future<void> _direcionarMotoboy({bool autoRestaurar = false}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final motoboyId = prefs.getString('motoboy_id');
-    
-    if (mounted) {
-      if (motoboyId != null) {
-        // --- INÍCIO LÓGICA BIOMETRIA MOTOBOY ---
-        bool autenticado = await BiometriaService.autenticar(context);
-        if (autenticado) {
-          if (!mounted) return;
-          Navigator.push(context, MaterialPageRoute(builder: (_) => MotoboyScreen(autoRestaurar: autoRestaurar)));
-        } else {
-          // Opcional: Feedback se falhar
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Autenticação necessária")));
-        }
-        // --- FIM LÓGICA BIOMETRIA MOTOBOY ---
-      } else {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const MotoboyLoginScreen()));
-      }
-    }
+  void _direcionarMotoboy({bool autoRestaurar = false}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MotoboyLoginScreen(autoRestaurar: autoRestaurar),
+      ),
+    );
   }
 
   @override
@@ -307,47 +356,101 @@ class _MenuScreenState extends State<MenuScreen> {
             child: ConstrainedBox(
               constraints: BoxConstraints(minHeight: constraints.maxHeight),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24.0,
+                  vertical: 24.0,
+                ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // LOGO E TÍTULO
                     Column(
                       children: [
                         Container(
                           padding: const EdgeInsets.all(25),
-                          decoration: BoxDecoration(color: Colors.blue.withOpacity(0.08), shape: BoxShape.circle),
-                          child: const Icon(Icons.location_on_rounded, size: 60, color: Colors.blue),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.08),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.location_on_rounded,
+                            size: 60,
+                            color: Colors.blue,
+                          ),
                         ),
                         const SizedBox(height: 25),
                         const FittedBox(
-                          child: Text("Rastreio MeIndica", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.black87)),
+                          child: Text(
+                            "Rastreio MeIndica",
+                            style: TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.black87,
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 8),
-                        const Text("Selecione seu perfil para acessar", style: TextStyle(color: Colors.grey, fontSize: 16)),
+                        const Text(
+                          "Selecione seu perfil para acessar",
+                          style: TextStyle(color: Colors.grey, fontSize: 16),
+                        ),
                       ],
                     ),
-                    
                     const SizedBox(height: 60),
-
-                    // BOTÕES
-                    _botaoMenu(context, "SOU ENTREGADOR", "Compartilhar localização", Icons.two_wheeler, Colors.blue, () => _direcionarMotoboy()),
+                    _botaoMenu(
+                      context,
+                      "SOU ENTREGADOR",
+                      "Compartilhar localização",
+                      Icons.two_wheeler,
+                      Colors.blue,
+                      () => _direcionarMotoboy(),
+                    ),
                     const SizedBox(height: 16),
-                    _botaoMenu(context, "SOU VENDEDOR", "Gerenciar entregadores", Icons.storefront_rounded, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VendedorLoginScreen()))),
+                    _botaoMenu(
+                      context,
+                      "SOU VENDEDOR",
+                      "Gerenciar entregadores",
+                      Icons.storefront_rounded,
+                      Colors.orange,
+                      () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const VendedorLoginScreen(),
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 16),
-                    _botaoMenu(context, "SOU CLIENTE", "Acompanhar pedido", Icons.person_pin_circle, Colors.green, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ClienteLoginScreen()))),
+                    _botaoMenu(
+                      context,
+                      "SOU CLIENTE",
+                      "Acompanhar pedido",
+                      Icons.person_pin_circle,
+                      Colors.green,
+                      () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ClienteLoginScreen(),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
           );
-        }
+        },
       ),
     );
   }
 
-  Widget _botaoMenu(BuildContext context, String titulo, String sub, IconData icone, Color cor, VoidCallback aoClicar) {
+  Widget _botaoMenu(
+    BuildContext context,
+    String titulo,
+    String sub,
+    IconData icone,
+    Color cor,
+    VoidCallback aoClicar,
+  ) {
     return InkWell(
       onTap: aoClicar,
       borderRadius: BorderRadius.circular(20),
@@ -356,8 +459,16 @@ class _MenuScreenState extends State<MenuScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
-            BoxShadow(color: Colors.grey.withOpacity(0.08), blurRadius: 15, offset: const Offset(0,5)),
-            BoxShadow(color: cor.withOpacity(0.1), blurRadius: 0, offset: const Offset(0,0)), 
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.08),
+              blurRadius: 15,
+              offset: const Offset(0, 5),
+            ),
+            BoxShadow(
+              color: cor.withOpacity(0.1),
+              blurRadius: 0,
+              offset: const Offset(0, 0),
+            ),
           ],
           border: Border.all(color: Colors.grey.shade100),
         ),
@@ -366,7 +477,10 @@ class _MenuScreenState extends State<MenuScreen> {
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(gradient: LinearGradient(colors: [cor, cor.withOpacity(0.7)]), borderRadius: BorderRadius.circular(15)),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: [cor, cor.withOpacity(0.7)]),
+                borderRadius: BorderRadius.circular(15),
+              ),
               child: Icon(icone, color: Colors.white, size: 28),
             ),
             const SizedBox(width: 20),
@@ -377,14 +491,30 @@ class _MenuScreenState extends State<MenuScreen> {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerLeft,
-                    child: Text(titulo, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
+                    child: Text(
+                      titulo,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                        color: Colors.black87,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 4),
-                  Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 13), overflow: TextOverflow.ellipsis, maxLines: 1),
+                  Text(
+                    sub,
+                    style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                 ],
               ),
             ),
-            Icon(Icons.arrow_forward_ios_rounded, size: 18, color: Colors.grey[300]),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 18,
+              color: Colors.grey[300],
+            ),
           ],
         ),
       ),
@@ -397,28 +527,90 @@ class _MenuScreenState extends State<MenuScreen> {
 // ============================================================================
 
 class MotoboyLoginScreen extends StatefulWidget {
-  const MotoboyLoginScreen({super.key});
+  final bool autoRestaurar;
+  const MotoboyLoginScreen({super.key, this.autoRestaurar = false});
 
   @override
   State<MotoboyLoginScreen> createState() => _MotoboyLoginScreenState();
 }
 
-class _MotoboyLoginScreenState extends State<MotoboyLoginScreen> with SingleTickerProviderStateMixin {
+class _MotoboyLoginScreenState extends State<MotoboyLoginScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final _emailCtrl = TextEditingController();
   final _senhaCtrl = TextEditingController();
   final _nomeCtrl = TextEditingController();
   bool _isLoading = false;
 
+  String? _savedMotoboyId;
+  String? _savedMotoboyNome;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _verificarBiometriaSalva();
+
+    if (widget.autoRestaurar) {
+      _verificarLoginAtivo();
+    }
+  }
+
+  Future<void> _verificarLoginAtivo() async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString('motoboy_id');
+    if (id != null && mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const MotoboyScreen(autoRestaurar: true),
+        ),
+      );
+    }
+  }
+
+  Future<void> _verificarBiometriaSalva() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _savedMotoboyId = prefs.getString('bio_motoboy_id');
+      _savedMotoboyNome = prefs.getString('bio_motoboy_nome');
+    });
+  }
+
+  Future<void> _loginComBiometria() async {
+    if (_savedMotoboyId == null) return;
+
+    final autenticado = await BiometriaService.autenticar(context);
+
+    if (autenticado) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('motoboy_id', _savedMotoboyId!);
+      await prefs.setString('motoboy_nome', _savedMotoboyNome ?? "Entregador");
+
+      if (mounted)
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const MotoboyScreen()),
+        );
+    } else {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Use sua senha para entrar."),
+            duration: Duration(seconds: 2),
+          ),
+        );
+    }
   }
 
   Future<void> _acaoAutenticacao() async {
     if (_emailCtrl.text.isEmpty || _senhaCtrl.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Preencha todos os campos"), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Preencha todos os campos"),
+          backgroundColor: Colors.red,
+        ),
+      );
       return;
     }
     setState(() => _isLoading = true);
@@ -426,28 +618,46 @@ class _MotoboyLoginScreenState extends State<MotoboyLoginScreen> with SingleTick
     try {
       final isLogin = _tabController.index == 0;
       final endpoint = isLogin ? 'login_motoboy.php' : 'cadastro_motoboy.php';
-      
-      final response = await http.post(Uri.parse('$baseUrl/$endpoint'), body: {
-        'email': _emailCtrl.text,
-        'senha': _senhaCtrl.text,
-        if (!isLogin) 'nome': _nomeCtrl.text,
-      });
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/$endpoint'),
+        body: {
+          'email': _emailCtrl.text,
+          'senha': _senhaCtrl.text,
+          if (!isLogin) 'nome': _nomeCtrl.text,
+        },
+      );
 
       dynamic data;
-      try { data = jsonDecode(response.body); } catch (e) { throw Exception("Erro no servidor."); }
+      try {
+        data = jsonDecode(response.body);
+      } catch (e) {
+        throw Exception("Erro no servidor.");
+      }
 
       if (data['status'] == 'sucesso') {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('motoboy_id', data['id']);
         await prefs.setString('motoboy_nome', data['nome']);
-        if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MotoboyScreen()));
+        // Salva para biometria futura
+        await prefs.setString('bio_motoboy_id', data['id']);
+        await prefs.setString('bio_motoboy_nome', data['nome']);
+
+        if (mounted)
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const MotoboyScreen()),
+          );
       } else {
         throw Exception(data['msg']);
       }
     } catch (e) {
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red),
+        );
     } finally {
-      if(mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -464,15 +674,15 @@ class _MotoboyLoginScreenState extends State<MotoboyLoginScreen> with SingleTick
             unselectedLabelColor: Colors.grey,
             indicatorColor: Colors.blue,
             indicatorSize: TabBarIndicatorSize.tab,
-            tabs: const [Tab(text: "JÁ TENHO CONTA"), Tab(text: "CRIAR NOVA")],
+            tabs: const [
+              Tab(text: "ENTRAR"),
+              Tab(text: "CRIAR CONTA"),
+            ],
           ),
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [
-                _buildForm(isLogin: true),
-                _buildForm(isLogin: false),
-              ],
+              children: [_buildForm(isLogin: true), _buildForm(isLogin: false)],
             ),
           ),
         ],
@@ -482,28 +692,186 @@ class _MotoboyLoginScreenState extends State<MotoboyLoginScreen> with SingleTick
 
   Widget _buildForm({required bool isLogin}) {
     return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            if (!isLogin) ...[
-              TextField(controller: _nomeCtrl, decoration: const InputDecoration(labelText: "Nome Completo", prefixIcon: Icon(Icons.person))),
-              const SizedBox(height: 15),
-            ],
-            TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email)), keyboardType: TextInputType.emailAddress),
-            const SizedBox(height: 15),
-            TextField(controller: _senhaCtrl, decoration: const InputDecoration(labelText: "Senha", prefixIcon: Icon(Icons.lock)), obscureText: true),
-            const SizedBox(height: 30),
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: ElevatedButton(
-                onPressed: _isLoading ? null : _acaoAutenticacao,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
-                child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : Text(isLogin ? "ENTRAR" : "CRIAR CONTA"),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 500),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (isLogin && _savedMotoboyId != null) ...[
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.15),
+                        blurRadius: 15,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _loginComBiometria,
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 20,
+                          horizontal: 20,
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.fingerprint,
+                                size: 32,
+                                color: Colors.blue,
+                              ),
+                            ),
+                            const SizedBox(width: 20),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    "BEM-VINDO DE VOLTA",
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _savedMotoboyNome?.toUpperCase() ??
+                                        "ENTREGADOR",
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: Colors.blue,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              color: Colors.blue,
+                              size: 18,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 30),
+                Row(
+                  children: [
+                    Expanded(child: Divider(color: Colors.grey[300])),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        "OU VIA SENHA",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[400],
+                        ),
+                      ),
+                    ),
+                    Expanded(child: Divider(color: Colors.grey[300])),
+                  ],
+                ),
+                const SizedBox(height: 30),
+              ],
+
+              if (!isLogin) ...[
+                TextFormField(
+                  controller: _nomeCtrl,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  decoration: InputDecoration(
+                    labelText: "Nome Completo",
+                    prefixIcon: Icon(
+                      Icons.person_outline_rounded,
+                      color: Colors.blue[300],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+              TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                decoration: InputDecoration(
+                  labelText: "Email",
+                  prefixIcon: Icon(
+                    Icons.alternate_email_rounded,
+                    color: Colors.blue[300],
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 20),
+              TextFormField(
+                controller: _senhaCtrl,
+                obscureText: true,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                decoration: InputDecoration(
+                  labelText: "Senha",
+                  prefixIcon: Icon(
+                    Icons.lock_outline_rounded,
+                    color: Colors.blue[300],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 40),
+
+              SizedBox(
+                height: 58,
+                child: ElevatedButton(
+                  onPressed: _isLoading ? null : _acaoAutenticacao,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    elevation: 5,
+                    shadowColor: Colors.blue.withOpacity(0.4),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                      : Text(
+                          isLogin ? "ACESSAR CONTA" : "CRIAR CONTA GRÁTIS",
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
         ),
       ),
     );
@@ -521,37 +889,60 @@ class VendedorLoginScreen extends StatefulWidget {
   State<VendedorLoginScreen> createState() => _VendedorLoginScreenState();
 }
 
-class _VendedorLoginScreenState extends State<VendedorLoginScreen> with SingleTickerProviderStateMixin {
+class _VendedorLoginScreenState extends State<VendedorLoginScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final _emailCtrl = TextEditingController();
   final _senhaCtrl = TextEditingController();
   final _nomeCtrl = TextEditingController();
   bool _isLoading = false;
 
+  String? _savedVendedorId;
+  String? _savedVendedorNome;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    // Movemos a verificação para depois do build para poder usar o contexto com segurança
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _verificarLoginSalvo();
+    _verificarBiometriaSalva();
+  }
+
+  Future<void> _verificarBiometriaSalva() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _savedVendedorId = prefs.getString('bio_vendedor_id');
+      _savedVendedorNome = prefs.getString('bio_vendedor_nome');
     });
   }
 
-  Future<void> _verificarLoginSalvo() async {
-    final prefs = await SharedPreferences.getInstance();
-    final id = prefs.getString('vendedor_id');
-    final nome = prefs.getString('vendedor_nome');
-    
-    if (id != null && mounted) {
-      // --- INÍCIO LÓGICA BIOMETRIA VENDEDOR ---
-      bool autenticado = await BiometriaService.autenticar(context);
-      if (autenticado) {
-        if (!mounted) return;
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => VendedorDashboardScreen(id: id, nome: nome ?? "Vendedor")));
-      }
-      // Se não autenticar, permanece na tela de login, permitindo digitar a senha ou tentar novamente
-      // --- FIM LÓGICA BIOMETRIA VENDEDOR ---
+  Future<void> _loginComBiometria() async {
+    if (_savedVendedorId == null) return;
+
+    final autenticado = await BiometriaService.autenticar(context);
+
+    if (autenticado) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('vendedor_id', _savedVendedorId!);
+      await prefs.setString('vendedor_nome', _savedVendedorNome ?? "Vendedor");
+
+      if (mounted)
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VendedorDashboardScreen(
+              id: _savedVendedorId!,
+              nome: _savedVendedorNome!,
+            ),
+          ),
+        );
+    } else {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Use sua senha para entrar."),
+            duration: Duration(seconds: 2),
+          ),
+        );
     }
   }
 
@@ -562,15 +953,48 @@ class _VendedorLoginScreenState extends State<VendedorLoginScreen> with SingleTi
     try {
       final isLogin = _tabController.index == 0;
       final endpoint = isLogin ? 'login_vendedor.php' : 'cadastro_vendedor.php';
-      final response = await http.post(Uri.parse('$baseUrl/$endpoint'), body: { 'email': _emailCtrl.text, 'senha': _senhaCtrl.text, if (!isLogin) 'nome': _nomeCtrl.text });
-      dynamic data; try { data = jsonDecode(response.body); } catch (e) { throw Exception("Erro servidor."); }
+      final response = await http.post(
+        Uri.parse('$baseUrl/$endpoint'),
+        body: {
+          'email': _emailCtrl.text,
+          'senha': _senhaCtrl.text,
+          if (!isLogin) 'nome': _nomeCtrl.text,
+        },
+      );
+      dynamic data;
+      try {
+        data = jsonDecode(response.body);
+      } catch (e) {
+        throw Exception("Erro servidor.");
+      }
       if (data['status'] == 'sucesso') {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('vendedor_id', data['id']); await prefs.setString('vendedor_nome', data['nome']);
-        if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => VendedorDashboardScreen(id: data['id'], nome: data['nome'])));
-      } else { throw Exception(data['msg']); }
-    } catch (e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red)); } 
-    finally { if(mounted) setState(() => _isLoading = false); }
+
+        await prefs.setString('vendedor_id', data['id']);
+        await prefs.setString('vendedor_nome', data['nome']);
+        // Salva para biometria
+        await prefs.setString('bio_vendedor_id', data['id']);
+        await prefs.setString('bio_vendedor_nome', data['nome']);
+
+        if (mounted)
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  VendedorDashboardScreen(id: data['id'], nome: data['nome']),
+            ),
+          );
+      } else {
+        throw Exception(data['msg']);
+      }
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red),
+        );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -586,15 +1010,15 @@ class _VendedorLoginScreenState extends State<VendedorLoginScreen> with SingleTi
             unselectedLabelColor: Colors.grey,
             indicatorColor: Colors.orange,
             indicatorSize: TabBarIndicatorSize.tab,
-            tabs: const [Tab(text: "JÁ TENHO CONTA"), Tab(text: "CRIAR NOVA")],
+            tabs: const [
+              Tab(text: "ENTRAR"),
+              Tab(text: "CRIAR CONTA"),
+            ],
           ),
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [
-                _buildForm(isLogin: true),
-                _buildForm(isLogin: false),
-              ],
+              children: [_buildForm(isLogin: true), _buildForm(isLogin: false)],
             ),
           ),
         ],
@@ -604,28 +1028,185 @@ class _VendedorLoginScreenState extends State<VendedorLoginScreen> with SingleTi
 
   Widget _buildForm({required bool isLogin}) {
     return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            if (!isLogin) ...[
-              TextField(controller: _nomeCtrl, decoration: const InputDecoration(labelText: "Nome da Loja", prefixIcon: Icon(Icons.store))),
-              const SizedBox(height: 15),
-            ],
-            TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email)), keyboardType: TextInputType.emailAddress),
-            const SizedBox(height: 15),
-            TextField(controller: _senhaCtrl, decoration: const InputDecoration(labelText: "Senha", prefixIcon: Icon(Icons.lock)), obscureText: true),
-            const SizedBox(height: 30),
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: ElevatedButton(
-                onPressed: _isLoading ? null : _acaoAutenticacao,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white),
-                child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : Text(isLogin ? "ENTRAR" : "CRIAR CONTA"),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 500),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (isLogin && _savedVendedorId != null) ...[
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.orange.withOpacity(0.15),
+                        blurRadius: 15,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _loginComBiometria,
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 20,
+                          horizontal: 20,
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.fingerprint,
+                                size: 32,
+                                color: Colors.orange,
+                              ),
+                            ),
+                            const SizedBox(width: 20),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    "LOJA IDENTIFICADA",
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _savedVendedorNome?.toUpperCase() ??
+                                        "VENDEDOR",
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: Colors.orange,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              color: Colors.orange,
+                              size: 18,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 30),
+                Row(
+                  children: [
+                    Expanded(child: Divider(color: Colors.grey[300])),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        "OU VIA SENHA",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[400],
+                        ),
+                      ),
+                    ),
+                    Expanded(child: Divider(color: Colors.grey[300])),
+                  ],
+                ),
+                const SizedBox(height: 30),
+              ],
+
+              if (!isLogin) ...[
+                TextFormField(
+                  controller: _nomeCtrl,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  decoration: InputDecoration(
+                    labelText: "Nome da Loja",
+                    prefixIcon: Icon(
+                      Icons.store_rounded,
+                      color: Colors.orange[300],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+              TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                decoration: InputDecoration(
+                  labelText: "Email Corporativo",
+                  prefixIcon: Icon(
+                    Icons.email_outlined,
+                    color: Colors.orange[300],
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 20),
+              TextFormField(
+                controller: _senhaCtrl,
+                obscureText: true,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                decoration: InputDecoration(
+                  labelText: "Senha de Acesso",
+                  prefixIcon: Icon(
+                    Icons.lock_outline,
+                    color: Colors.orange[300],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 40),
+              SizedBox(
+                height: 58,
+                child: ElevatedButton(
+                  onPressed: _isLoading ? null : _acaoAutenticacao,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                    elevation: 5,
+                    shadowColor: Colors.orange.withOpacity(0.4),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Text(
+                          isLogin ? "ACESSAR PAINEL" : "ABRIR MINHA CONTA",
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
         ),
       ),
     );
@@ -639,10 +1220,15 @@ class _VendedorLoginScreenState extends State<VendedorLoginScreen> with SingleTi
 class VendedorDashboardScreen extends StatefulWidget {
   final String id;
   final String nome;
-  const VendedorDashboardScreen({super.key, required this.id, required this.nome});
+  const VendedorDashboardScreen({
+    super.key,
+    required this.id,
+    required this.nome,
+  });
 
   @override
-  State<VendedorDashboardScreen> createState() => _VendedorDashboardScreenState();
+  State<VendedorDashboardScreen> createState() =>
+      _VendedorDashboardScreenState();
 }
 
 class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
@@ -668,7 +1254,9 @@ class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
   Future<void> _carregarDados({bool silencioso = false}) async {
     if (!silencioso) setState(() => _isLoadingInicial = true);
     try {
-      final response = await http.get(Uri.parse('$baseUrl/listar_motoboys.php?vendedor_id=${widget.id}'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/listar_motoboys.php?vendedor_id=${widget.id}'),
+      );
       if (response.statusCode == 200) {
         try {
           final data = jsonDecode(response.body);
@@ -696,30 +1284,51 @@ class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
         content: TextField(
           controller: controller,
           decoration: const InputDecoration(
-            prefixText: "ENT-", 
+            prefixText: "ENT-",
             hintText: "1234567",
             labelText: "ID do Entregador",
-            counterText: ""
+            counterText: "",
           ),
           keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(7)],
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(7),
+          ],
         ),
         actions: [
-          OutlinedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancelar"),
+          ),
           ElevatedButton(
             onPressed: () async {
               if (controller.text.isNotEmpty) {
                 Navigator.pop(ctx);
                 try {
-                  final resp = await http.post(Uri.parse('$baseUrl/vincular.php'), body: {
-                    'vendedor_id': widget.id,
-                    'motoboy_id': "ENT-${controller.text}"
-                  });
+                  final resp = await http.post(
+                    Uri.parse('$baseUrl/vincular.php'),
+                    body: {
+                      'vendedor_id': widget.id,
+                      'motoboy_id': "ENT-${controller.text}",
+                    },
+                  );
                   final data = jsonDecode(resp.body);
-                  _carregarDados(); 
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['msg']), backgroundColor: data['status'] == 'sucesso' ? Colors.green : Colors.red));
-                } catch(e) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Erro ao vincular"), backgroundColor: Colors.red));
+                  _carregarDados();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(data['msg']),
+                      backgroundColor: data['status'] == 'sucesso'
+                          ? Colors.green
+                          : Colors.red,
+                    ),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Erro ao vincular"),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               }
             },
@@ -737,16 +1346,32 @@ class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
         title: "Remover Entregador?",
         icon: Icons.warning_amber_rounded,
         color: Colors.red,
-        content: const Text("O entregador perderá o acesso à sua lista de lojas.", textAlign: TextAlign.center),
+        content: const Text(
+          "O entregador perderá o acesso à sua lista de lojas.",
+          textAlign: TextAlign.center,
+        ),
         actions: [
-          OutlinedButton(onPressed: ()=>Navigator.pop(ctx,false), child: const Text("Cancelar")),
-          ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), onPressed: ()=>Navigator.pop(ctx,true), child: const Text("Remover"))
-        ]
-      )
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Remover"),
+          ),
+        ],
+      ),
     );
     if (confirm == true) {
       try {
-        await http.post(Uri.parse('$baseUrl/desvincular.php'), body: { 'tipo': 'vendedor', 'meu_id': widget.id, 'alvo_id': alvoId });
+        await http.post(
+          Uri.parse('$baseUrl/desvincular.php'),
+          body: {'tipo': 'vendedor', 'meu_id': widget.id, 'alvo_id': alvoId},
+        );
         _carregarDados();
       } catch (e) {}
     }
@@ -754,7 +1379,7 @@ class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
 
   void _mostrarDetalhesEntrega(Map<String, dynamic> moto) {
     if (moto['online'] != true) return;
-    
+
     showDialog(
       context: context,
       builder: (ctx) => CustomDialog(
@@ -764,34 +1389,62 @@ class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
         content: Column(
           children: [
             const Text("Pedido:", style: TextStyle(color: Colors.grey)),
-            Text(moto['pedido'] ?? "S/N", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            Text(
+              moto['pedido'] ?? "S/N",
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 20),
-            const Text("Código de Rastreio:", style: TextStyle(color: Colors.grey)),
+            const Text(
+              "Código de Rastreio:",
+              style: TextStyle(color: Colors.grey),
+            ),
             const SizedBox(height: 5),
             GestureDetector(
               onTap: () {
-                 Clipboard.setData(ClipboardData(text: moto['rastreio']));
-                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Código copiado!")));
+                Clipboard.setData(ClipboardData(text: moto['rastreio']));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Código copiado!")),
+                );
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.blue.withOpacity(0.3))),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(moto['rastreio'] ?? "", style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blue)),
+                    Text(
+                      moto['rastreio'] ?? "",
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
                     const SizedBox(width: 10),
-                    const Icon(Icons.copy, size: 20, color: Colors.blue)
+                    const Icon(Icons.copy, size: 20, color: Colors.blue),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 10),
-            const Text("Envie para o cliente", style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const Text(
+              "Envie para o cliente",
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
           ],
         ),
         actions: [
-          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Fechar"))
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Fechar"),
+          ),
         ],
       ),
     );
@@ -799,93 +1452,365 @@ class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
 
   Future<void> _copiarID() async {
     await Clipboard.setData(ClipboardData(text: widget.id));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID copiado!"), duration: Duration(seconds: 1)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("ID copiado!"),
+        duration: Duration(seconds: 1),
+      ),
+    );
   }
 
   Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('vendedor_id');
     await prefs.remove('vendedor_nome');
-    if(mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MenuScreen()));
+    if (mounted)
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const MenuScreen()),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(title: Text(widget.nome), actions: [IconButton(icon: const Icon(Icons.exit_to_app), onPressed: _logout)]),
+      appBar: AppBar(
+        title: Text(widget.nome),
+        actions: [
+          IconButton(icon: const Icon(Icons.exit_to_app), onPressed: _logout),
+        ],
+      ),
       body: RefreshIndicator(
-        onRefresh: () async { await _carregarDados(); },
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]),
-                child: Column(
-                  children: [
-                    const Text("SEU ID DE VENDEDOR", style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 5),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: SelectableText(widget.id, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 1)))),
-                        const SizedBox(width: 8),
-                        IconButton(onPressed: _copiarID, icon: const Icon(Icons.copy, color: Colors.white), constraints: const BoxConstraints(), padding: EdgeInsets.zero),
+        onRefresh: () async {
+          await _carregarDados();
+        },
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 600),
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.orange, Colors.orange.shade700],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.orange.withOpacity(0.3),
+                          blurRadius: 15,
+                          offset: const Offset(0, 8),
+                        ),
                       ],
                     ),
-                    const Text("Compartilhe com seus entregadores", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 30),
-              
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text("Meus Entregadores", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
-                TextButton.icon(onPressed: _vincularMotoboy, icon: const Icon(Icons.add, size: 18), label: const Text("Adicionar"))
-              ]),
-              
-              const SizedBox(height: 10),
-              
-              if (_isLoadingInicial)
-                const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
-              else if (_motoboys.isEmpty)
-                const Center(child: Padding(padding: EdgeInsets.all(40.0), child: Text("Nenhum entregador vinculado.", style: TextStyle(color: Colors.grey))))
-              else
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _motoboys.length,
-                  itemBuilder: (context, index) {
-                    final moto = _motoboys[index];
-                    final isOnline = moto['online'] == true;
-                    
-                    return Card(
-                      elevation: 0,
-                      color: isOnline ? Colors.green[50] : Colors.white,
-                      margin: const EdgeInsets.only(bottom: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: isOnline ? Colors.green.withOpacity(0.3) : Colors.grey.shade200)),
-                      child: ListTile(
-                        onTap: () => _mostrarDetalhesEntrega(moto),
-                        leading: CircleAvatar(backgroundColor: isOnline ? Colors.green[100] : Colors.grey[100], child: Icon(Icons.two_wheeler, color: isOnline ? Colors.green[800] : Colors.grey)),
-                        title: Text(moto['nome'] ?? "Entregador", style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text("ID: ${moto['id']}", style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
+                    child: Column(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Text(
+                            "SEU ID DE VENDEDOR",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 15),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            if(isOnline) Container(margin: const EdgeInsets.only(right: 10), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(10)), child: const Text("EM ROTA", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))),
-                            IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => _desvincular(moto['id']))
+                            Flexible(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: SelectableText(
+                                  widget.id,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 2,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            IconButton(
+                              onPressed: _copiarID,
+                              icon: const Icon(Icons.copy, color: Colors.white),
+                              style: IconButton.styleFrom(
+                                backgroundColor: Colors.white.withOpacity(0.2),
+                                highlightColor: Colors.white.withOpacity(0.1),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          "Compartilhe este código com seus entregadores",
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 35),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.orange[50],
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                Icons.two_wheeler,
+                                color: Colors.orange[800],
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            const Flexible(
+                              child: Text(
+                                "Meus Entregadores",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           ],
                         ),
                       ),
-                    );
-                  },
-                ),
-            ],
+                      TextButton.icon(
+                        onPressed: _vincularMotoboy,
+                        icon: const Icon(Icons.add_circle_outline, size: 20),
+                        label: const Text("Adicionar"),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.orange,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 15),
+
+                  if (_isLoadingInicial)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(40),
+                        child: CircularProgressIndicator(color: Colors.orange),
+                      ),
+                    )
+                  else if (_motoboys.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(40),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.grey.shade100),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.no_accounts_outlined,
+                            size: 50,
+                            color: Colors.grey[300],
+                          ),
+                          const SizedBox(height: 15),
+                          const Text(
+                            "Nenhum entregador vinculado",
+                            style: TextStyle(
+                              color: Colors.grey,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          const Text(
+                            "Clique em 'Adicionar' para vincular",
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _motoboys.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final moto = _motoboys[index];
+                        final isOnline = moto['online'] == true;
+
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.grey.withOpacity(0.05),
+                                blurRadius: 10,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                            border: isOnline
+                                ? Border.all(
+                                    color: Colors.green.withOpacity(0.5),
+                                    width: 1.5,
+                                  )
+                                : Border.all(color: Colors.transparent),
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => _mostrarDetalhesEntrega(moto),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Row(
+                                  children: [
+                                    Stack(
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 24,
+                                          backgroundColor: isOnline
+                                              ? Colors.green[50]
+                                              : Colors.grey[100],
+                                          child: Icon(
+                                            Icons.person,
+                                            color: isOnline
+                                                ? Colors.green[700]
+                                                : Colors.grey[400],
+                                          ),
+                                        ),
+                                        if (isOnline)
+                                          Positioned(
+                                            right: 0,
+                                            bottom: 0,
+                                            child: Container(
+                                              width: 14,
+                                              height: 14,
+                                              decoration: BoxDecoration(
+                                                color: Colors.green,
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                  color: Colors.white,
+                                                  width: 2,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            moto['nome'] ?? "Entregador",
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                              color: Colors.black87,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[100],
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              "ID: ${moto['id']}",
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontFamily: 'monospace',
+                                                color: Colors.grey[600],
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (isOnline)
+                                      Container(
+                                        padding: const EdgeInsets.only(
+                                          right: 8,
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.end,
+                                          children: [
+                                            Text(
+                                              "EM ROTA",
+                                              style: TextStyle(
+                                                color: Colors.green[700],
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            Icon(
+                                              Icons.directions_bike,
+                                              color: Colors.green[700],
+                                              size: 16,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.remove_circle_outline,
+                                        color: Colors.red,
+                                      ),
+                                      onPressed: () => _desvincular(moto['id']),
+                                      tooltip: "Remover",
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -900,10 +1825,12 @@ class _VendedorDashboardScreenState extends State<VendedorDashboardScreen> {
 class MotoboyScreen extends StatefulWidget {
   final bool autoRestaurar;
   const MotoboyScreen({super.key, this.autoRestaurar = false});
-  @override State<MotoboyScreen> createState() => _MotoboyScreenState();
+  @override
+  State<MotoboyScreen> createState() => _MotoboyScreenState();
 }
 
-class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserver {
+class _MotoboyScreenState extends State<MotoboyScreen>
+    with WidgetsBindingObserver {
   String? _codigoSessao;
   String? _motoboyId;
   String? _motoboyNome;
@@ -911,59 +1838,57 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
   bool _modoMultiplo = false;
   int _totalEntregas = 1;
   int _entregasConcluidas = 0;
-  
-  // Lista para armazenar as entregas vindas do banco
+
   List<dynamic> _entregasAtivasLista = [];
   Timer? _timerAtualizacaoLista;
 
-  @override 
-  void initState() { 
-    super.initState(); 
-    WidgetsBinding.instance.addObserver(this); 
-    _carregarDados(); 
-    _checkPermissions(); 
-    
-    // Tenta restaurar estado local primeiro (SharedPreferences)
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _carregarDados();
+    _checkPermissions();
+
     if (widget.autoRestaurar) _restaurarEstadoLocal();
 
-    // Inicia timer para buscar entregas ativas no banco a cada 10s
-    _timerAtualizacaoLista = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if(_motoboyId != null && _codigoSessao == null) {
+    _timerAtualizacaoLista = Timer.periodic(const Duration(seconds: 10), (
+      timer,
+    ) {
+      if (_motoboyId != null && _codigoSessao == null) {
         _buscarEntregasAtivasNoBanco();
       }
     });
   }
 
-  @override 
-  void dispose() { 
-    WidgetsBinding.instance.removeObserver(this); 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timerAtualizacaoLista?.cancel();
-    super.dispose(); 
+    super.dispose();
   }
 
-  @override 
-  void didChangeAppLifecycleState(AppLifecycleState state) { 
-    // Opcional: Atualizar lista ao voltar para o app
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _codigoSessao == null) {
       _buscarEntregasAtivasNoBanco();
     }
   }
 
-  Future<void> _carregarDados() async { 
-    final p = await SharedPreferences.getInstance(); 
-    setState(() { 
-      _motoboyId = p.getString('motoboy_id'); 
-      _motoboyNome = p.getString('motoboy_nome'); 
+  Future<void> _carregarDados() async {
+    final p = await SharedPreferences.getInstance();
+    setState(() {
+      _motoboyId = p.getString('motoboy_id');
+      _motoboyNome = p.getString('motoboy_nome');
     });
-    // Busca inicial assim que tiver o ID
     _buscarEntregasAtivasNoBanco();
   }
 
-  // --- NOVA FUNÇÃO: Busca no servidor ---
   Future<void> _buscarEntregasAtivasNoBanco() async {
     if (_motoboyId == null) return;
     try {
-      final response = await http.get(Uri.parse('$baseUrl/listar_entregas_ativas.php?motoboy_id=$_motoboyId'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/listar_entregas_ativas.php?motoboy_id=$_motoboyId'),
+      );
       if (response.statusCode == 200) {
         final dados = jsonDecode(response.body);
         if (mounted) {
@@ -977,12 +1902,17 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
     }
   }
 
-  Future<List<dynamic>> _buscarVendedores() async { 
-    if(_motoboyId==null)return[]; 
-    try { final r = await http.get(Uri.parse('$baseUrl/listar_vendedores.php?motoboy_id=$_motoboyId')); 
-    if(r.statusCode==200) return jsonDecode(r.body); } catch(e){} return []; 
+  Future<List<dynamic>> _buscarVendedores() async {
+    if (_motoboyId == null) return [];
+    try {
+      final r = await http.get(
+        Uri.parse('$baseUrl/listar_vendedores.php?motoboy_id=$_motoboyId'),
+      );
+      if (r.statusCode == 200) return jsonDecode(r.body);
+    } catch (e) {}
+    return [];
   }
-  
+
   Future<void> _vincularVendedor() async {
     final controller = TextEditingController();
     await showDialog(
@@ -993,26 +1923,52 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
         color: Colors.blue,
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(prefixText: "VEND-", hintText: "1234567", labelText: "ID da Loja", counterText: ""),
+          decoration: const InputDecoration(
+            prefixText: "VEND-",
+            hintText: "1234567",
+            labelText: "ID da Loja",
+            counterText: "",
+          ),
           keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(7)],
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(7),
+          ],
         ),
         actions: [
-          OutlinedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancelar"),
+          ),
           ElevatedButton(
             onPressed: () async {
               if (controller.text.isNotEmpty) {
                 Navigator.pop(ctx);
                 try {
-                  final resp = await http.post(Uri.parse('$baseUrl/vincular.php'), body: {
-                    'motoboy_id': _motoboyId,
-                    'vendedor_id': "VEND-${controller.text}"
-                  });
+                  final resp = await http.post(
+                    Uri.parse('$baseUrl/vincular.php'),
+                    body: {
+                      'motoboy_id': _motoboyId,
+                      'vendedor_id': "VEND-${controller.text}",
+                    },
+                  );
                   final data = jsonDecode(resp.body);
-                  setState(() {}); 
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['msg']), backgroundColor: data['status']=='sucesso'?Colors.green:Colors.red));
-                } catch(e) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Erro ao conectar"), backgroundColor: Colors.red));
+                  setState(() {});
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(data['msg']),
+                      backgroundColor: data['status'] == 'sucesso'
+                          ? Colors.green
+                          : Colors.red,
+                    ),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Erro ao conectar"),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               }
             },
@@ -1024,23 +1980,90 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
   }
 
   Future<void> _desvincular(String alvoId) async {
-    final confirm = await showDialog<bool>(context: context, builder: (ctx) => CustomDialog(title: "Remover Loja?", icon: Icons.delete_forever, color: Colors.red, content: const Text("Você deixará de aparecer para esta loja.", textAlign: TextAlign.center), actions: [OutlinedButton(onPressed: ()=>Navigator.pop(ctx,false), child: const Text("Não")), ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), onPressed: ()=>Navigator.pop(ctx,true), child: const Text("Sim"))]));
-    if (confirm == true) { try { await http.post(Uri.parse('$baseUrl/desvincular.php'), body: { 'tipo': 'motoboy', 'meu_id': _motoboyId, 'alvo_id': alvoId }); setState(() {}); } catch (e) {} }
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => CustomDialog(
+        title: "Remover Loja?",
+        icon: Icons.delete_forever,
+        color: Colors.red,
+        content: const Text(
+          "Você deixará de aparecer para esta loja.",
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Não"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Sim"),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      try {
+        await http.post(
+          Uri.parse('$baseUrl/desvincular.php'),
+          body: {'tipo': 'motoboy', 'meu_id': _motoboyId, 'alvo_id': alvoId},
+        );
+        setState(() {});
+      } catch (e) {}
+    }
   }
 
-  Future<void> _copiarID() async { if (_motoboyId != null) { await Clipboard.setData(ClipboardData(text: _motoboyId!)); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID copiado!"), duration: Duration(seconds: 1))); } }
-  
-  Future<void> _logout() async { 
-    if(_codigoSessao!=null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Finalize a entrega antes."), backgroundColor: Colors.red)); return; } 
-    final p=await SharedPreferences.getInstance(); await p.remove('motoboy_id'); await p.remove('motoboy_nome'); if(mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=>const MenuScreen())); 
+  Future<void> _copiarID() async {
+    if (_motoboyId != null) {
+      await Clipboard.setData(ClipboardData(text: _motoboyId!));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("ID copiado!"),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
   }
-  
-  Future<void> _checkPermissions() async { var s = await Permission.ignoreBatteryOptimizations.status; if (!s.isGranted) await Permission.ignoreBatteryOptimizations.request(); }
-  
+
+  Future<void> _logout() async {
+    if (_codigoSessao != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Finalize a entrega antes."),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    final p = await SharedPreferences.getInstance();
+    await p.remove('motoboy_id');
+    await p.remove('motoboy_nome');
+    // NOTA: Mantemos 'bio_motoboy_id' para o login futuro
+    if (mounted)
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const MenuScreen()),
+      );
+  }
+
+  Future<void> _checkPermissions() async {
+    var s = await Permission.ignoreBatteryOptimizations.status;
+    if (!s.isGranted) await Permission.ignoreBatteryOptimizations.request();
+  }
+
   Future<void> _configurarRota(int qtd) async {
-    final vendedores = await _buscarVendedores(); 
+    final vendedores = await _buscarVendedores();
     if (vendedores.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vincule-se a uma loja primeiro."), backgroundColor: Colors.orange));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Vincule-se a uma loja primeiro."),
+          backgroundColor: Colors.orange,
+        ),
+      );
       return;
     }
     String? vendedorSelecionado = vendedores.first['id'];
@@ -1056,7 +2079,14 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
           children: [
             DropdownButtonFormField<String>(
               value: vendedorSelecionado,
-              items: vendedores.map<DropdownMenuItem<String>>((v) => DropdownMenuItem(value: v['id'], child: Text(v['nome'], overflow: TextOverflow.ellipsis))).toList(),
+              items: vendedores
+                  .map<DropdownMenuItem<String>>(
+                    (v) => DropdownMenuItem(
+                      value: v['id'],
+                      child: Text(v['nome'], overflow: TextOverflow.ellipsis),
+                    ),
+                  )
+                  .toList(),
               onChanged: (val) => vendedorSelecionado = val,
               decoration: const InputDecoration(labelText: "Loja Parceira"),
               isExpanded: true,
@@ -1064,47 +2094,95 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
             const SizedBox(height: 15),
             TextField(
               controller: pedidoController,
-              decoration: const InputDecoration(labelText: "Número do Pedido", hintText: "Ex: 12345"),
+              decoration: const InputDecoration(
+                labelText: "Número do Pedido",
+                hintText: "Ex: 12345",
+              ),
               keyboardType: TextInputType.number,
-            )
+            ),
           ],
         ),
         actions: [
-          OutlinedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancelar"),
+          ),
           ElevatedButton(
             onPressed: () {
-              if (pedidoController.text.isNotEmpty && vendedorSelecionado != null) {
+              if (pedidoController.text.isNotEmpty &&
+                  vendedorSelecionado != null) {
                 Navigator.pop(ctx);
-                _iniciarSessao(qtd, vendedorSelecionado!, pedidoController.text);
+                _iniciarSessao(
+                  qtd,
+                  vendedorSelecionado!,
+                  pedidoController.text,
+                );
               }
             },
             child: const Text("INICIAR"),
-          )
+          ),
         ],
-      )
+      ),
     );
   }
 
-  Future<void> _iniciarSessao(int qtd, String vendedorId, String pedidoId) async {
+  Future<void> _iniciarSessao(
+    int qtd,
+    String vendedorId,
+    String pedidoId,
+  ) async {
     setState(() => _isLoading = true);
     await Permission.notification.request();
     var statusLoc = await Permission.location.request();
-    if (await Permission.locationAlways.isDenied) await Permission.locationAlways.request();
+    if (await Permission.locationAlways.isDenied)
+      await Permission.locationAlways.request();
 
     if (statusLoc.isGranted) {
       try {
-        Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-        String novoCodigo = List.generate(5, (index) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Random().nextInt(36)]).join();
-        var response = await http.post(Uri.parse('$baseUrl/criar_sessao.php'), body: { 'codigo': novoCodigo, 'lat': pos.latitude.toString(), 'lng': pos.longitude.toString(), 'motoboy_id': _motoboyId, 'vendedor_id': vendedorId, 'pedido_id': pedidoId });
+        Position pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        );
+        String novoCodigo = List.generate(
+          5,
+          (index) =>
+              'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Random().nextInt(36)],
+        ).join();
+        var response = await http.post(
+          Uri.parse('$baseUrl/criar_sessao.php'),
+          body: {
+            'codigo': novoCodigo,
+            'lat': pos.latitude.toString(),
+            'lng': pos.longitude.toString(),
+            'motoboy_id': _motoboyId,
+            'vendedor_id': vendedorId,
+            'pedido_id': pedidoId,
+          },
+        );
         if (response.statusCode == 200) {
-             setState(() { _codigoSessao = novoCodigo; _totalEntregas = qtd; _entregasConcluidas = 0; _modoMultiplo = qtd > 1; _isLoading = false; });
-            _salvarProgresso();
-            final service = FlutterBackgroundService(); await service.startService(); 
-            // CORREÇÃO APLICADA: Enviando também o motoboy_id
-            service.invoke("startTracking", {'codigo': novoCodigo, 'motoboy_id': _motoboyId});
-        } else { setState(() => _isLoading = false); }
-      } catch (e) { setState(() => _isLoading = false); }
-    } else { setState(() => _isLoading = false); }
+          setState(() {
+            _codigoSessao = novoCodigo;
+            _totalEntregas = qtd;
+            _entregasConcluidas = 0;
+            _modoMultiplo = qtd > 1;
+            _isLoading = false;
+          });
+          _salvarProgresso();
+          final service = FlutterBackgroundService();
+          await service.startService();
+          // CORREÇÃO APLICADA: Enviando também o motoboy_id
+          service.invoke("startTracking", {
+            'codigo': novoCodigo,
+            'motoboy_id': _motoboyId,
+          });
+        } else {
+          setState(() => _isLoading = false);
+        }
+      } catch (e) {
+        setState(() => _isLoading = false);
+      }
+    } else {
+      setState(() => _isLoading = false);
+    }
   }
 
   // --- AÇÃO: RETOMAR SESSÃO PELA LISTA ---
@@ -1112,71 +2190,156 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
     setState(() => _isLoading = true);
     // Como estamos retomando do banco, assumimos modo simples (1 entrega) pois o tracking múltiplo é local
     // Se quiser, poderia salvar qtd no banco também, mas para "resgate" o tracking é o mais importante.
-    setState(() { 
+    setState(() {
       _codigoSessao = codigo;
       _totalEntregas = 1;
       _entregasConcluidas = 0;
       _modoMultiplo = false;
       _isLoading = false;
     });
-    
+
     await _salvarProgresso();
-    
+
     // Reinicia o tracking
-    final service = FlutterBackgroundService(); 
-    if (!(await service.isRunning())) await service.startService(); 
+    final service = FlutterBackgroundService();
+    if (!(await service.isRunning())) await service.startService();
     // CORREÇÃO APLICADA: Enviando também o motoboy_id
-    service.invoke("startTracking", {'codigo': codigo, 'motoboy_id': _motoboyId});
-    
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Entrega retomada!"), backgroundColor: Colors.green));
+    service.invoke("startTracking", {
+      'codigo': codigo,
+      'motoboy_id': _motoboyId,
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Entrega retomada!"),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   // --- AÇÃO: FINALIZAR SESSÃO PELA LISTA ---
   Future<void> _finalizarSessaoEspecifica(String codigo) async {
     try {
-      await http.post(Uri.parse('$baseUrl/finalizar.php'), body: {'codigo': codigo});
+      await http.post(
+        Uri.parse('$baseUrl/finalizar.php'),
+        body: {'codigo': codigo},
+      );
       _buscarEntregasAtivasNoBanco(); // Atualiza a lista
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Entrega finalizada."), backgroundColor: Colors.orange));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Entrega finalizada."),
+          backgroundColor: Colors.orange,
+        ),
+      );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Erro ao finalizar"), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Erro ao finalizar"),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
   Future<void> _restaurarEstadoLocal() async {
-    setState(() => _isLoading = true); 
-    final p = await SharedPreferences.getInstance(); 
+    setState(() => _isLoading = true);
+    final p = await SharedPreferences.getInstance();
     final c = p.getString('sessao_codigo');
-    
+
     if (c != null) {
-      setState(() { _codigoSessao = c; _totalEntregas = p.getInt('sessao_total')??1; _entregasConcluidas = p.getInt('sessao_concluidas')??0; _modoMultiplo = p.getBool('sessao_multipla')??false; _isLoading = false; });
-      final s = FlutterBackgroundService(); 
-      if (!(await s.isRunning())) await s.startService(); 
+      setState(() {
+        _codigoSessao = c;
+        _totalEntregas = p.getInt('sessao_total') ?? 1;
+        _entregasConcluidas = p.getInt('sessao_concluidas') ?? 0;
+        _modoMultiplo = p.getBool('sessao_multipla') ?? false;
+        _isLoading = false;
+      });
+      final s = FlutterBackgroundService();
+      if (!(await s.isRunning())) await s.startService();
       // CORREÇÃO APLICADA: Enviando também o motoboy_id
-      s.invoke("startTracking", {'codigo': _codigoSessao, 'motoboy_id': _motoboyId});
-    } else { 
+      s.invoke("startTracking", {
+        'codigo': _codigoSessao,
+        'motoboy_id': _motoboyId,
+      });
+    } else {
       setState(() => _isLoading = false);
-      // Se não tem local, busca no banco
       _buscarEntregasAtivasNoBanco();
     }
   }
 
-  Future<void> _salvarProgresso() async { final p = await SharedPreferences.getInstance(); await p.setString('sessao_codigo', _codigoSessao!); await p.setInt('sessao_total', _totalEntregas); await p.setInt('sessao_concluidas', _entregasConcluidas); await p.setBool('sessao_multipla', _modoMultiplo); }
-  Future<void> _limparMemoria() async { final p = await SharedPreferences.getInstance(); await p.remove('sessao_codigo'); await p.remove('sessao_total'); await p.remove('sessao_concluidas'); await p.remove('sessao_multipla'); }
-  
-  Future<void> _finalizarTotalmente() async { 
-    if (_codigoSessao != null) { 
-      final s = FlutterBackgroundService(); 
-      s.invoke("stopService", {'codigo': _codigoSessao}); 
-    } 
-    await _limparMemoria(); 
-    setState(() { _codigoSessao = null; });
-    
+  Future<void> _salvarProgresso() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('sessao_codigo', _codigoSessao!);
+    await p.setInt('sessao_total', _totalEntregas);
+    await p.setInt('sessao_concluidas', _entregasConcluidas);
+    await p.setBool('sessao_multipla', _modoMultiplo);
+  }
+
+  Future<void> _limparMemoria() async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove('sessao_codigo');
+    await p.remove('sessao_total');
+    await p.remove('sessao_concluidas');
+    await p.remove('sessao_multipla');
+  }
+
+  Future<void> _finalizarTotalmente() async {
+    if (_codigoSessao != null) {
+      final s = FlutterBackgroundService();
+      s.invoke("stopService", {'codigo': _codigoSessao});
+    }
+    await _limparMemoria();
+    setState(() {
+      _codigoSessao = null;
+    });
+
     // Atualiza a lista para remover a finalizada visualmente
     _buscarEntregasAtivasNoBanco();
   }
-  
-  void _concluirEtapa() { if (_entregasConcluidas < _totalEntregas - 1) { setState(() { _entregasConcluidas++; }); _salvarProgresso(); } else { _finalizarTotalmente(); } }
-  void _perguntarQtd() { final c = TextEditingController(); showDialog(context: context, builder: (ctx) => CustomDialog(title: "Quantas Entregas?", content: TextField(controller: c, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: "Ex: 3", labelText: "Quantidade")), actions: [OutlinedButton(onPressed: ()=>Navigator.pop(ctx), child: const Text("Cancelar")), ElevatedButton(onPressed: (){ if(c.text.isNotEmpty) { Navigator.pop(ctx); _configurarRota(int.parse(c.text)); } }, child: const Text("Continuar"))])); }
+
+  void _concluirEtapa() {
+    if (_entregasConcluidas < _totalEntregas - 1) {
+      setState(() {
+        _entregasConcluidas++;
+      });
+      _salvarProgresso();
+    } else {
+      _finalizarTotalmente();
+    }
+  }
+
+  void _perguntarQtd() {
+    final c = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => CustomDialog(
+        title: "Quantas Entregas?",
+        content: TextField(
+          controller: c,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            hintText: "Ex: 3",
+            labelText: "Quantidade",
+          ),
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (c.text.isNotEmpty) {
+                Navigator.pop(ctx);
+                _configurarRota(int.parse(c.text));
+              }
+            },
+            child: const Text("Continuar"),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1184,7 +2347,12 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(title: const Text("Painel Entregador"), actions: [IconButton(icon: const Icon(Icons.exit_to_app), onPressed: _logout)]),
+      appBar: AppBar(
+        title: const Text("Painel Entregador"),
+        actions: [
+          IconButton(icon: const Icon(Icons.exit_to_app), onPressed: _logout),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () async {
           await _buscarEntregasAtivasNoBanco();
@@ -1197,27 +2365,86 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: double.infinity, padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.blue[800], borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 10, offset: const Offset(0,5))]),
-                child: Column(children: [
-                  const Text("SEU ID DE ENTREGADOR", style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 5),
-                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: SelectableText(_motoboyId ?? "...", style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)))), const SizedBox(width: 8), IconButton(onPressed: _copiarID, icon: const Icon(Icons.copy, color: Colors.white), padding: EdgeInsets.zero, constraints: const BoxConstraints())]),
-                  Text(_motoboyNome ?? "", style: const TextStyle(color: Colors.white, fontSize: 16)),
-                ]),
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.blue[800],
+                  borderRadius: BorderRadius.circular(15),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.blue.withOpacity(0.3),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      "SEU ID DE ENTREGADOR",
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: SelectableText(
+                              _motoboyId ?? "...",
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: _copiarID,
+                          icon: const Icon(Icons.copy, color: Colors.white),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      _motoboyNome ?? "",
+                      style: const TextStyle(color: Colors.white, fontSize: 16),
+                    ),
+                  ],
+                ),
               ),
-              
-              // ======================================================
-              // NOVA SEÇÃO: MINHAS ENTREGAS ATIVAS
-              // ======================================================
+
               if (_entregasAtivasLista.isNotEmpty) ...[
                 const SizedBox(height: 25),
                 Row(
                   children: [
                     const Icon(Icons.flash_on_rounded, color: Colors.green),
                     const SizedBox(width: 8),
-                    const Text("Minhas Entregas Ativas", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    const Text(
+                      "Minhas Entregas Ativas",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
                     const Spacer(),
-                    IconButton(icon: const Icon(Icons.refresh, size: 20, color: Colors.blue), onPressed: _buscarEntregasAtivasNoBanco)
+                    IconButton(
+                      icon: const Icon(
+                        Icons.refresh,
+                        size: 20,
+                        color: Colors.blue,
+                      ),
+                      onPressed: _buscarEntregasAtivasNoBanco,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 10),
@@ -1232,97 +2459,218 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.green.withOpacity(0.3)),
-                        boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, 3))],
+                        border: Border.all(
+                          color: Colors.green.withOpacity(0.3),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.green.withOpacity(0.05),
+                            blurRadius: 5,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
                       ),
                       child: Column(
                         children: [
                           ListTile(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 5,
+                            ),
                             leading: Container(
                               padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(color: Colors.green[50], shape: BoxShape.circle),
-                              child: const Icon(Icons.local_shipping, color: Colors.green),
+                              decoration: BoxDecoration(
+                                color: Colors.green[50],
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.local_shipping,
+                                color: Colors.green,
+                              ),
                             ),
-                            title: Text("Pedido #${entrega['pedido']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                            title: Text(
+                              "Pedido #${entrega['pedido']}",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(entrega['loja'], style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.w500)),
-                                Text("Cód: ${entrega['codigo']}", style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.grey)),
+                                Text(
+                                  entrega['loja'],
+                                  style: TextStyle(
+                                    color: Colors.grey[700],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                Text(
+                                  "Cód: ${entrega['codigo']}",
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    color: Colors.grey,
+                                  ),
+                                ),
                               ],
                             ),
                             trailing: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                const Text("Atualizado", style: TextStyle(fontSize: 10, color: Colors.grey)),
-                                Text(entrega['hora'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                const Text(
+                                  "Atualizado",
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                                Text(
+                                  entrega['hora'],
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
                           Container(
-                            decoration: BoxDecoration(color: Colors.grey[50], borderRadius: const BorderRadius.vertical(bottom: Radius.circular(15))),
-                            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[50],
+                              borderRadius: const BorderRadius.vertical(
+                                bottom: Radius.circular(15),
+                              ),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 15,
+                              vertical: 10,
+                            ),
                             child: Row(
                               children: [
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: () => _finalizarSessaoEspecifica(entrega['codigo']),
-                                    icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                                    onPressed: () => _finalizarSessaoEspecifica(
+                                      entrega['codigo'],
+                                    ),
+                                    icon: const Icon(
+                                      Icons.stop_circle_outlined,
+                                      size: 18,
+                                    ),
                                     label: const Text("Finalizar"),
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: Colors.red,
-                                      side: BorderSide(color: Colors.red.withOpacity(0.5)),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                      side: BorderSide(
+                                        color: Colors.red.withOpacity(0.5),
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
                                     ),
                                   ),
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: ElevatedButton.icon(
-                                    onPressed: () => _retomarSessaoEspecifica(entrega['codigo']),
-                                    icon: const Icon(Icons.play_circle_fill, size: 18),
+                                    onPressed: () => _retomarSessaoEspecifica(
+                                      entrega['codigo'],
+                                    ),
+                                    icon: const Icon(
+                                      Icons.play_circle_fill,
+                                      size: 18,
+                                    ),
                                     label: const Text("Retomar"),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: Colors.green,
                                       foregroundColor: Colors.white,
                                       elevation: 0,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
                                     ),
                                   ),
                                 ),
                               ],
                             ),
-                          )
+                          ),
                         ],
                       ),
                     );
                   },
                 ),
               ],
-              // ======================================================
 
               const SizedBox(height: 30),
-              const Text("Iniciar Nova Rota", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(
+                "Iniciar Nova Rota",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 10),
-              Row(children: [
-                Expanded(child: _btnOpcao("Única", Icons.person, Colors.blue, () => _configurarRota(1))),
-                const SizedBox(width: 10),
-                Expanded(child: _btnOpcao("Múltipla", Icons.alt_route, Colors.orange, _perguntarQtd)),
-              ]),
+              Row(
+                children: [
+                  Expanded(
+                    child: _btnOpcao(
+                      "Única",
+                      Icons.person,
+                      Colors.blue,
+                      () => _configurarRota(1),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _btnOpcao(
+                      "Múltipla",
+                      Icons.alt_route,
+                      Colors.orange,
+                      _perguntarQtd,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 30),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Lojas Vinculadas", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), TextButton.icon(onPressed: _vincularVendedor, icon: const Icon(Icons.add), label: const Text("Adicionar"))]),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    "Lojas Vinculadas",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  TextButton.icon(
+                    onPressed: _vincularVendedor,
+                    icon: const Icon(Icons.add),
+                    label: const Text("Adicionar"),
+                  ),
+                ],
+              ),
               FutureBuilder<List<dynamic>>(
                 future: _buscarVendedores(),
                 builder: (ctx, snap) {
-                  if (!snap.hasData || snap.data!.isEmpty) return const Padding(padding: EdgeInsets.all(20), child: Text("Nenhuma loja vinculada."));
+                  if (!snap.hasData || snap.data!.isEmpty)
+                    return const Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text("Nenhuma loja vinculada."),
+                    );
                   return ListView.builder(
-                    shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: snap.data!.length,
-                    itemBuilder: (c, i) => Card(child: ListTile(leading: const Icon(Icons.store), title: Text(snap.data![i]['nome']), subtitle: Text(snap.data![i]['id']), trailing: IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => _desvincular(snap.data![i]['id']))))
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: snap.data!.length,
+                    itemBuilder: (c, i) => Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.store),
+                        title: Text(snap.data![i]['nome']),
+                        subtitle: Text(snap.data![i]['id']),
+                        trailing: IconButton(
+                          icon: const Icon(
+                            Icons.delete_outline,
+                            color: Colors.red,
+                          ),
+                          onPressed: () => _desvincular(snap.data![i]['id']),
+                        ),
+                      ),
+                    ),
                   );
-                }
-              )
+                },
+              ),
             ],
           ),
         ),
@@ -1331,28 +2679,116 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
   }
 
   Widget _btnOpcao(String t, IconData i, Color c, VoidCallback f) {
-    return InkWell(onTap: f, child: Container(padding: const EdgeInsets.symmetric(vertical: 20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade200)), child: Column(children: [Icon(i, color: c, size: 30), const SizedBox(height: 5), Text(t, style: const TextStyle(fontWeight: FontWeight.bold))])));
+    return InkWell(
+      onTap: f,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Column(
+          children: [
+            Icon(i, color: c, size: 30),
+            const SizedBox(height: 5),
+            Text(t, style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildPainelAtivo() {
-    int atual = _entregasConcluidas + 1; bool isUltima = atual == _totalEntregas;
+    int atual = _entregasConcluidas + 1;
+    bool isUltima = atual == _totalEntregas;
     return Scaffold(
-      appBar: AppBar(title: const Text("Em Entrega"), automaticallyImplyLeading: false),
+      appBar: AppBar(
+        title: const Text("Em Entrega"),
+        automaticallyImplyLeading: false,
+      ),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Container(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8), decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.green)), child: const Text("RASTREIO ATIVO", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold))),
-            const SizedBox(height: 30),
-            FittedBox(child: SelectableText(_codigoSessao!, style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, letterSpacing: 3))),
-            const Text("Código do Cliente"),
-            const SizedBox(height: 40),
-            if(_modoMultiplo) ...[Text("Entrega $atual de $_totalEntregas", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 10), LinearProgressIndicator(value: atual/_totalEntregas, minHeight: 8, borderRadius: BorderRadius.circular(4)), const SizedBox(height: 30)],
-            SizedBox(width: double.infinity, height: 60, child: ElevatedButton(onPressed: _concluirEtapa, style: ElevatedButton.styleFrom(backgroundColor: isUltima?Colors.red:Colors.blue, foregroundColor: Colors.white), child: Text(isUltima ? "FINALIZAR TUDO" : "CONCLUIR ENTREGA ATUAL"))),
-            if(!isUltima) Padding(padding: const EdgeInsets.only(top: 15), child: TextButton(onPressed: _finalizarTotalmente, child: const Text("Cancelar e Encerrar Tudo", style: TextStyle(color: Colors.red))))
-          ]),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.green),
+                ),
+                child: const Text(
+                  "RASTREIO ATIVO",
+                  style: TextStyle(
+                    color: Colors.green,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 30),
+              FittedBox(
+                child: SelectableText(
+                  _codigoSessao!,
+                  style: const TextStyle(
+                    fontSize: 48,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 3,
+                  ),
+                ),
+              ),
+              const Text("Código do Cliente"),
+              const SizedBox(height: 40),
+              if (_modoMultiplo) ...[
+                Text(
+                  "Entrega $atual de $_totalEntregas",
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                LinearProgressIndicator(
+                  value: atual / _totalEntregas,
+                  minHeight: 8,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 30),
+              ],
+              SizedBox(
+                width: double.infinity,
+                height: 60,
+                child: ElevatedButton(
+                  onPressed: _concluirEtapa,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isUltima ? Colors.red : Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: Text(
+                    isUltima ? "FINALIZAR TUDO" : "CONCLUIR ENTREGA ATUAL",
+                  ),
+                ),
+              ),
+              if (!isUltima)
+                Padding(
+                  padding: const EdgeInsets.only(top: 15),
+                  child: TextButton(
+                    onPressed: _finalizarTotalmente,
+                    child: const Text(
+                      "Cancelar e Encerrar Tudo",
+                      style: TextStyle(color: Colors.red),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
-      )
+      ),
     );
   }
 }
@@ -1374,11 +2810,52 @@ class ClienteLoginScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text("Código de Rastreio", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const Text(
+              "Código de Rastreio",
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 20),
-            TextField(controller: controller, textAlign: TextAlign.center, textCapitalization: TextCapitalization.characters, maxLength: 5, style: const TextStyle(fontSize: 32, letterSpacing: 5, fontWeight: FontWeight.bold), decoration: const InputDecoration(hintText: "A1B2C", counterText: "")),
+            TextField(
+              controller: controller,
+              textAlign: TextAlign.center,
+              textCapitalization: TextCapitalization.characters,
+              maxLength: 5,
+              style: const TextStyle(
+                fontSize: 32,
+                letterSpacing: 5,
+                fontWeight: FontWeight.bold,
+              ),
+              decoration: const InputDecoration(
+                hintText: "A1B2C",
+                counterText: "",
+              ),
+            ),
             const SizedBox(height: 30),
-            SizedBox(width: double.infinity, height: 55, child: ElevatedButton(onPressed: () { if (controller.text.length == 5) Navigator.push(context, MaterialPageRoute(builder: (_) => MapaClienteScreen(codigo: controller.text.toUpperCase()))); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))), child: const Text("RASTREAR AGORA")))
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton(
+                onPressed: () {
+                  if (controller.text.length == 5)
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => MapaClienteScreen(
+                          codigo: controller.text.toUpperCase(),
+                        ),
+                      ),
+                    );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+                child: const Text("RASTREAR AGORA"),
+              ),
+            ),
           ],
         ),
       ),
@@ -1389,7 +2866,8 @@ class ClienteLoginScreen extends StatelessWidget {
 class MapaClienteScreen extends StatefulWidget {
   final String codigo;
   const MapaClienteScreen({super.key, required this.codigo});
-  @override State<MapaClienteScreen> createState() => _MapaClienteScreenState();
+  @override
+  State<MapaClienteScreen> createState() => _MapaClienteScreenState();
 }
 
 class _MapaClienteScreenState extends State<MapaClienteScreen> {
@@ -1401,21 +2879,42 @@ class _MapaClienteScreenState extends State<MapaClienteScreen> {
   bool _seguirMoto = true;
   bool _mapaPronto = false;
 
-  @override void initState() { super.initState(); _atualizarPosicaoMoto(); _timerPolling = Timer.periodic(const Duration(seconds: 3), (timer) { _atualizarPosicaoMoto(); }); }
-  @override void dispose() { _timerPolling?.cancel(); super.dispose(); }
+  @override
+  void initState() {
+    super.initState();
+    _atualizarPosicaoMoto();
+    _timerPolling = Timer.periodic(const Duration(seconds: 20), (timer) {
+      _atualizarPosicaoMoto();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timerPolling?.cancel();
+    super.dispose();
+  }
 
   Future<void> _atualizarPosicaoMoto() async {
     if (!mounted) return;
     try {
-      final response = await http.get(Uri.parse('$baseUrl/ler_posicao.php?codigo=${widget.codigo}'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/ler_posicao.php?codigo=${widget.codigo}'),
+      );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['status'] == 'ativo') {
           LatLng novaPos = LatLng(data['lat'], data['lng']);
-          setState(() { _posicaoMoto = novaPos; _statusTxt = "Em trânsito"; });
-          if (_seguirMoto && _mapaPronto) _mapController.move(novaPos, _mapController.camera.zoom);
+          setState(() {
+            _posicaoMoto = novaPos;
+            _statusTxt = "Em trânsito";
+          });
+          if (_seguirMoto && _mapaPronto)
+            _mapController.move(novaPos, _mapController.camera.zoom);
         } else {
-          setState(() { _ativo = false; _statusTxt = "Entrega finalizada."; });
+          setState(() {
+            _ativo = false;
+            _statusTxt = "Entrega finalizada.";
+          });
           _timerPolling?.cancel();
         }
       }
@@ -1427,18 +2926,84 @@ class _MapaClienteScreenState extends State<MapaClienteScreen> {
     return Scaffold(
       appBar: AppBar(title: Text("Pedido #${widget.codigo}")),
       body: _posicaoMoto == null
-          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(!_ativo?Icons.check_circle:Icons.search, size: 60, color: !_ativo?Colors.green:Colors.blue), const SizedBox(height: 10), Text(_statusTxt)]))
-          : Stack(children: [
-              FlutterMap(
-                mapController: _mapController,
-                options: MapOptions(initialCenter: _posicaoMoto!, initialZoom: 16.0, onMapReady: () => _mapaPronto = true, onPositionChanged: (pos, hasGesture) { if (hasGesture) setState(() => _seguirMoto = false); }),
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.meindica.rastreio'),
-                  MarkerLayer(markers: [Marker(point: _posicaoMoto!, width: 80, height: 80, child: const Column(children: [Icon(Icons.delivery_dining, color: Colors.red, size: 50), Text("Moto", style: TextStyle(fontWeight: FontWeight.bold, backgroundColor: Colors.white))]))]),
+                  Icon(
+                    !_ativo ? Icons.check_circle : Icons.search,
+                    size: 60,
+                    color: !_ativo ? Colors.green : Colors.blue,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(_statusTxt),
                 ],
               ),
-              if (_ativo) Positioned(right: 20, bottom: 40, child: FloatingActionButton(backgroundColor: _seguirMoto ? Colors.blue : Colors.white, child: Icon(Icons.gps_fixed, color: _seguirMoto ? Colors.white : Colors.grey), onPressed: () => setState(() { _seguirMoto = !_seguirMoto; if (_seguirMoto) _mapController.move(_posicaoMoto!, 16.0); })))
-            ]),
+            )
+          : Stack(
+              children: [
+                FlutterMap(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: _posicaoMoto!,
+                    initialZoom: 16.0,
+                    onMapReady: () => _mapaPronto = true,
+                    onPositionChanged: (pos, hasGesture) {
+                      if (hasGesture) setState(() => _seguirMoto = false);
+                    },
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.meindica.rastreio',
+                    ),
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _posicaoMoto!,
+                          width: 80,
+                          height: 80,
+                          child: const Column(
+                            children: [
+                              Icon(
+                                Icons.delivery_dining,
+                                color: Colors.red,
+                                size: 50,
+                              ),
+                              Text(
+                                "Moto",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  backgroundColor: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                if (_ativo)
+                  Positioned(
+                    right: 20,
+                    bottom: 40,
+                    child: FloatingActionButton(
+                      backgroundColor: _seguirMoto ? Colors.blue : Colors.white,
+                      child: Icon(
+                        Icons.gps_fixed,
+                        color: _seguirMoto ? Colors.white : Colors.grey,
+                      ),
+                      onPressed: () => setState(() {
+                        _seguirMoto = !_seguirMoto;
+                        if (_seguirMoto)
+                          _mapController.move(_posicaoMoto!, 16.0);
+                      }),
+                    ),
+                  ),
+              ],
+            ),
     );
   }
 }
