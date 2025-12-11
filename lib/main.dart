@@ -837,13 +837,77 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
   bool _modoMultiplo = false;
   int _totalEntregas = 1;
   int _entregasConcluidas = 0;
+  
+  // Lista para armazenar as entregas vindas do banco
+  List<dynamic> _entregasAtivasLista = [];
+  Timer? _timerAtualizacaoLista;
 
-  @override void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); _carregarDados(); _checkPermissions(); if (widget.autoRestaurar) _restaurarEstadoLocal(); }
-  @override void dispose() { WidgetsBinding.instance.removeObserver(this); super.dispose(); }
-  @override void didChangeAppLifecycleState(AppLifecycleState state) { if (state == AppLifecycleState.detached) { final s = FlutterBackgroundService(); s.invoke("stopService"); } }
+  @override 
+  void initState() { 
+    super.initState(); 
+    WidgetsBinding.instance.addObserver(this); 
+    _carregarDados(); 
+    _checkPermissions(); 
+    
+    // Tenta restaurar estado local primeiro (SharedPreferences)
+    if (widget.autoRestaurar) _restaurarEstadoLocal();
 
-  Future<void> _carregarDados() async { final p = await SharedPreferences.getInstance(); setState(() { _motoboyId = p.getString('motoboy_id'); _motoboyNome = p.getString('motoboy_nome'); }); }
-  Future<List<dynamic>> _buscarVendedores() async { if(_motoboyId==null)return[]; try { final r = await http.get(Uri.parse('$baseUrl/listar_vendedores.php?motoboy_id=$_motoboyId')); if(r.statusCode==200) return jsonDecode(r.body); } catch(e){} return []; }
+    // Inicia timer para buscar entregas ativas no banco a cada 10s
+    _timerAtualizacaoLista = Timer.periodic(const Duration(seconds: 10), (timer) {
+      if(_motoboyId != null && _codigoSessao == null) {
+        _buscarEntregasAtivasNoBanco();
+      }
+    });
+  }
+
+  @override 
+  void dispose() { 
+    WidgetsBinding.instance.removeObserver(this); 
+    _timerAtualizacaoLista?.cancel();
+    super.dispose(); 
+  }
+
+  @override 
+  void didChangeAppLifecycleState(AppLifecycleState state) { 
+    // Opcional: Atualizar lista ao voltar para o app
+    if (state == AppLifecycleState.resumed && _codigoSessao == null) {
+      _buscarEntregasAtivasNoBanco();
+    }
+  }
+
+  Future<void> _carregarDados() async { 
+    final p = await SharedPreferences.getInstance(); 
+    setState(() { 
+      _motoboyId = p.getString('motoboy_id'); 
+      _motoboyNome = p.getString('motoboy_nome'); 
+    });
+    // Busca inicial assim que tiver o ID
+    _buscarEntregasAtivasNoBanco();
+  }
+
+  // --- NOVA FUNÇÃO: Busca no servidor ---
+  Future<void> _buscarEntregasAtivasNoBanco() async {
+    if (_motoboyId == null) return;
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/listar_entregas_ativas.php?motoboy_id=$_motoboyId'));
+      if (response.statusCode == 200) {
+        final dados = jsonDecode(response.body);
+        if (mounted) {
+          setState(() {
+            _entregasAtivasLista = dados;
+          });
+        }
+      }
+    } catch (e) {
+      print("Erro ao buscar ativas: $e");
+    }
+  }
+
+  Future<List<dynamic>> _buscarVendedores() async { 
+    if(_motoboyId==null)return[]; 
+    try { final r = await http.get(Uri.parse('$baseUrl/listar_vendedores.php?motoboy_id=$_motoboyId')); 
+    if(r.statusCode==200) return jsonDecode(r.body); } catch(e){} return []; 
+  }
   
   Future<void> _vincularVendedor() async {
     final controller = TextEditingController();
@@ -891,7 +955,12 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
   }
 
   Future<void> _copiarID() async { if (_motoboyId != null) { await Clipboard.setData(ClipboardData(text: _motoboyId!)); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID copiado!"), duration: Duration(seconds: 1))); } }
-  Future<void> _logout() async { if(_codigoSessao!=null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Finalize a entrega antes."), backgroundColor: Colors.red)); return; } final p=await SharedPreferences.getInstance(); await p.remove('motoboy_id'); await p.remove('motoboy_nome'); if(mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=>const MenuScreen())); }
+  
+  Future<void> _logout() async { 
+    if(_codigoSessao!=null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Finalize a entrega antes."), backgroundColor: Colors.red)); return; } 
+    final p=await SharedPreferences.getInstance(); await p.remove('motoboy_id'); await p.remove('motoboy_nome'); if(mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=>const MenuScreen())); 
+  }
+  
   Future<void> _checkPermissions() async { var s = await Permission.ignoreBatteryOptimizations.status; if (!s.isGranted) await Permission.ignoreBatteryOptimizations.request(); }
   
   Future<void> _configurarRota(int qtd) async {
@@ -962,16 +1031,72 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
     } else { setState(() => _isLoading = false); }
   }
 
+  // --- AÇÃO: RETOMAR SESSÃO PELA LISTA ---
+  Future<void> _retomarSessaoEspecifica(String codigo) async {
+    setState(() => _isLoading = true);
+    // Como estamos retomando do banco, assumimos modo simples (1 entrega) pois o tracking múltiplo é local
+    // Se quiser, poderia salvar qtd no banco também, mas para "resgate" o tracking é o mais importante.
+    setState(() { 
+      _codigoSessao = codigo;
+      _totalEntregas = 1;
+      _entregasConcluidas = 0;
+      _modoMultiplo = false;
+      _isLoading = false;
+    });
+    
+    await _salvarProgresso();
+    
+    // Reinicia o tracking
+    final service = FlutterBackgroundService(); 
+    if (!(await service.isRunning())) await service.startService(); 
+    service.invoke("startTracking", {'codigo': codigo});
+    
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Entrega retomada!"), backgroundColor: Colors.green));
+  }
+
+  // --- AÇÃO: FINALIZAR SESSÃO PELA LISTA ---
+  Future<void> _finalizarSessaoEspecifica(String codigo) async {
+    try {
+      await http.post(Uri.parse('$baseUrl/finalizar.php'), body: {'codigo': codigo});
+      _buscarEntregasAtivasNoBanco(); // Atualiza a lista
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Entrega finalizada."), backgroundColor: Colors.orange));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Erro ao finalizar"), backgroundColor: Colors.red));
+    }
+  }
+
   Future<void> _restaurarEstadoLocal() async {
-    setState(() => _isLoading = true); final p = await SharedPreferences.getInstance(); final c = p.getString('sessao_codigo');
+    setState(() => _isLoading = true); 
+    final p = await SharedPreferences.getInstance(); 
+    final c = p.getString('sessao_codigo');
+    
     if (c != null) {
       setState(() { _codigoSessao = c; _totalEntregas = p.getInt('sessao_total')??1; _entregasConcluidas = p.getInt('sessao_concluidas')??0; _modoMultiplo = p.getBool('sessao_multipla')??false; _isLoading = false; });
-      final s = FlutterBackgroundService(); if (!(await s.isRunning())) await s.startService(); s.invoke("startTracking", {'codigo': _codigoSessao});
-    } else { setState(() => _isLoading = false); }
+      final s = FlutterBackgroundService(); 
+      if (!(await s.isRunning())) await s.startService(); 
+      s.invoke("startTracking", {'codigo': _codigoSessao});
+    } else { 
+      setState(() => _isLoading = false);
+      // Se não tem local, busca no banco
+      _buscarEntregasAtivasNoBanco();
+    }
   }
+
   Future<void> _salvarProgresso() async { final p = await SharedPreferences.getInstance(); await p.setString('sessao_codigo', _codigoSessao!); await p.setInt('sessao_total', _totalEntregas); await p.setInt('sessao_concluidas', _entregasConcluidas); await p.setBool('sessao_multipla', _modoMultiplo); }
   Future<void> _limparMemoria() async { final p = await SharedPreferences.getInstance(); await p.remove('sessao_codigo'); await p.remove('sessao_total'); await p.remove('sessao_concluidas'); await p.remove('sessao_multipla'); }
-  Future<void> _finalizarTotalmente() async { if (_codigoSessao != null) { final s = FlutterBackgroundService(); s.invoke("stopService", {'codigo': _codigoSessao}); } await _limparMemoria(); setState(() { _codigoSessao = null; }); }
+  
+  Future<void> _finalizarTotalmente() async { 
+    if (_codigoSessao != null) { 
+      final s = FlutterBackgroundService(); 
+      s.invoke("stopService", {'codigo': _codigoSessao}); 
+    } 
+    await _limparMemoria(); 
+    setState(() { _codigoSessao = null; });
+    
+    // Atualiza a lista para remover a finalizada visualmente
+    _buscarEntregasAtivasNoBanco();
+  }
+  
   void _concluirEtapa() { if (_entregasConcluidas < _totalEntregas - 1) { setState(() { _entregasConcluidas++; }); _salvarProgresso(); } else { _finalizarTotalmente(); } }
   void _perguntarQtd() { final c = TextEditingController(); showDialog(context: context, builder: (ctx) => CustomDialog(title: "Quantas Entregas?", content: TextField(controller: c, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: "Ex: 3", labelText: "Quantidade")), actions: [OutlinedButton(onPressed: ()=>Navigator.pop(ctx), child: const Text("Cancelar")), ElevatedButton(onPressed: (){ if(c.text.isNotEmpty) { Navigator.pop(ctx); _configurarRota(int.parse(c.text)); } }, child: const Text("Continuar"))])); }
 
@@ -982,41 +1107,146 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(title: const Text("Painel Entregador"), actions: [IconButton(icon: const Icon(Icons.exit_to_app), onPressed: _logout)]),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: double.infinity, padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.blue[800], borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 10, offset: const Offset(0,5))]),
-              child: Column(children: [
-                const Text("SEU ID DE ENTREGADOR", style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 5),
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: [Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: SelectableText(_motoboyId ?? "...", style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)))), const SizedBox(width: 8), IconButton(onPressed: _copiarID, icon: const Icon(Icons.copy, color: Colors.white), padding: EdgeInsets.zero, constraints: const BoxConstraints())]),
-                Text(_motoboyNome ?? "", style: const TextStyle(color: Colors.white, fontSize: 16)),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await _buscarEntregasAtivasNoBanco();
+          await _buscarVendedores();
+        },
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity, padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.blue[800], borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 10, offset: const Offset(0,5))]),
+                child: Column(children: [
+                  const Text("SEU ID DE ENTREGADOR", style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 5),
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: SelectableText(_motoboyId ?? "...", style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)))), const SizedBox(width: 8), IconButton(onPressed: _copiarID, icon: const Icon(Icons.copy, color: Colors.white), padding: EdgeInsets.zero, constraints: const BoxConstraints())]),
+                  Text(_motoboyNome ?? "", style: const TextStyle(color: Colors.white, fontSize: 16)),
+                ]),
+              ),
+              
+              // ======================================================
+              // NOVA SEÇÃO: MINHAS ENTREGAS ATIVAS
+              // ======================================================
+              if (_entregasAtivasLista.isNotEmpty) ...[
+                const SizedBox(height: 25),
+                Row(
+                  children: [
+                    const Icon(Icons.flash_on_rounded, color: Colors.green),
+                    const SizedBox(width: 8),
+                    const Text("Minhas Entregas Ativas", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    const Spacer(),
+                    IconButton(icon: const Icon(Icons.refresh, size: 20, color: Colors.blue), onPressed: _buscarEntregasAtivasNoBanco)
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _entregasAtivasLista.length,
+                  itemBuilder: (context, index) {
+                    final entrega = _entregasAtivasLista[index];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.green.withOpacity(0.3)),
+                        boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, 3))],
+                      ),
+                      child: Column(
+                        children: [
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+                            leading: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(color: Colors.green[50], shape: BoxShape.circle),
+                              child: const Icon(Icons.local_shipping, color: Colors.green),
+                            ),
+                            title: Text("Pedido #${entrega['pedido']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(entrega['loja'], style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.w500)),
+                                Text("Cód: ${entrega['codigo']}", style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.grey)),
+                              ],
+                            ),
+                            trailing: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                const Text("Atualizado", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                Text(entrega['hora'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            decoration: BoxDecoration(color: Colors.grey[50], borderRadius: const BorderRadius.vertical(bottom: Radius.circular(15))),
+                            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => _finalizarSessaoEspecifica(entrega['codigo']),
+                                    icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                                    label: const Text("Finalizar"),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.red,
+                                      side: BorderSide(color: Colors.red.withOpacity(0.5)),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: () => _retomarSessaoEspecifica(entrega['codigo']),
+                                    icon: const Icon(Icons.play_circle_fill, size: 18),
+                                    label: const Text("Retomar"),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.green,
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+              // ======================================================
+
+              const SizedBox(height: 30),
+              const Text("Iniciar Nova Rota", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(child: _btnOpcao("Única", Icons.person, Colors.blue, () => _configurarRota(1))),
+                const SizedBox(width: 10),
+                Expanded(child: _btnOpcao("Múltipla", Icons.alt_route, Colors.orange, _perguntarQtd)),
               ]),
-            ),
-            const SizedBox(height: 30),
-            const Text("Iniciar Nova Rota", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Row(children: [
-              Expanded(child: _btnOpcao("Única", Icons.person, Colors.blue, () => _configurarRota(1))),
-              const SizedBox(width: 10),
-              Expanded(child: _btnOpcao("Múltipla", Icons.alt_route, Colors.orange, _perguntarQtd)),
-            ]),
-            const SizedBox(height: 30),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Lojas Vinculadas", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), TextButton.icon(onPressed: _vincularVendedor, icon: const Icon(Icons.add), label: const Text("Adicionar"))]),
-            FutureBuilder<List<dynamic>>(
-              future: _buscarVendedores(),
-              builder: (ctx, snap) {
-                if (!snap.hasData || snap.data!.isEmpty) return const Padding(padding: EdgeInsets.all(20), child: Text("Nenhuma loja vinculada."));
-                return ListView.builder(
-                  shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: snap.data!.length,
-                  itemBuilder: (c, i) => Card(child: ListTile(leading: const Icon(Icons.store), title: Text(snap.data![i]['nome']), subtitle: Text(snap.data![i]['id']), trailing: IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => _desvincular(snap.data![i]['id']))))
-                );
-              }
-            )
-          ],
+              const SizedBox(height: 30),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Lojas Vinculadas", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), TextButton.icon(onPressed: _vincularVendedor, icon: const Icon(Icons.add), label: const Text("Adicionar"))]),
+              FutureBuilder<List<dynamic>>(
+                future: _buscarVendedores(),
+                builder: (ctx, snap) {
+                  if (!snap.hasData || snap.data!.isEmpty) return const Padding(padding: EdgeInsets.all(20), child: Text("Nenhuma loja vinculada."));
+                  return ListView.builder(
+                    shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: snap.data!.length,
+                    itemBuilder: (c, i) => Card(child: ListTile(leading: const Icon(Icons.store), title: Text(snap.data![i]['nome']), subtitle: Text(snap.data![i]['id']), trailing: IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => _desvincular(snap.data![i]['id']))))
+                  );
+                }
+              )
+            ],
+          ),
         ),
       ),
     );

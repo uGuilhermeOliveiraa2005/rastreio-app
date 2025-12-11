@@ -5,7 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
-// URL REPETIDA AQUI POIS O SERVIÇO RODA ISOLADO DO MAIN
+// URL base da API
 const String baseUrl = "https://meindicaalguem.com.br/api/rastreio";
 
 Future<void> initializeService() async {
@@ -13,8 +13,8 @@ Future<void> initializeService() async {
 
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'my_foreground', 
-    'Rastreio Ativo', 
-    description: 'Canal de notificação do rastreio',
+    'Rastreio Entregador', 
+    description: 'Serviço de localização em tempo real',
     importance: Importance.high, 
   );
 
@@ -30,8 +30,8 @@ Future<void> initializeService() async {
       autoStart: false, 
       isForegroundMode: true,
       notificationChannelId: 'my_foreground',
-      initialNotificationTitle: 'Rastreio MeIndica',
-      initialNotificationContent: 'Aguardando início...',
+      initialNotificationTitle: 'Rastreio Ativo',
+      initialNotificationContent: 'Localizando...',
       foregroundServiceNotificationId: 888,
     ),
     iosConfiguration: IosConfiguration(
@@ -46,50 +46,37 @@ void onStart(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
   
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+  
+  // Stream global para evitar recriação
   StreamSubscription<Position>? positionStream;
 
-  // --- ESCUTA O COMANDO PARA PARAR TUDO ---
+  // --- PARAR O SERVIÇO ---
   service.on('stopService').listen((event) async {
-    // 1. Tenta recuperar o código que veio da tela principal (se houver)
-    String? codigo = event?['codigo'];
-
-    // 2. Remove a notificação da bandeja imediatamente
+    await positionStream?.cancel();
+    positionStream = null;
     await flutterLocalNotificationsPlugin.cancel(888);
-
-    // 3. Se um código foi passado, DELETA do banco.
-    // Se nenhum código foi passado (fechamento do app), MANTÉM no banco.
-    if (codigo != null) {
-        try {
-            await http.post(
-                Uri.parse('$baseUrl/finalizar.php'),
-                body: {'codigo': codigo},
-            );
-            print("Sessão $codigo destruída com sucesso.");
-        } catch (e) {
-            print("Erro ao finalizar no background: $e");
-        }
-    }
-
-    // 4. Encerra o serviço definitivamente (notificação some)
     service.stopSelf();
+    print("BACKGROUND: Serviço encerrado.");
   });
 
+  // --- INICIAR RASTREIO (GENÉRICO PARA O MOTOBOY) ---
   service.on('startTracking').listen((event) async {
     if (event != null) {
-      String codigo = event['codigo'];
+      String motoboyId = event['motoboy_id']; // Recebe o ID do Motoboy, não do pedido
       
       if (service is AndroidServiceInstance) {
         service.setAsForegroundService();
       }
 
+      // Notificação Fixa
       flutterLocalNotificationsPlugin.show(
         888,
-        'Rastreio em Andamento',
-        'Enviando localização do pedido #$codigo',
+        'Rastreio Ativo',
+        'Suas entregas estão sendo atualizadas.',
         const NotificationDetails(
           android: AndroidNotificationDetails(
             'my_foreground',
-            'Rastreio Ativo',
+            'Rastreio Entregador',
             icon: 'ic_bg_service_small', 
             ongoing: true,
             priority: Priority.high,
@@ -98,32 +85,37 @@ void onStart(ServiceInstance service) async {
         ),
       );
 
+      // Configuração GPS
       const LocationSettings locationSettings = LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 10, 
+        distanceFilter: 15, // Atualiza a cada 15 metros
       );
+
+      // Reinicia stream se já existir
+      await positionStream?.cancel();
 
       positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) async {
         try {
-          print("BACKGROUND: Enviando Lat: ${position.latitude}");
+          print("BACKGROUND: Atualizando para Motoboy $motoboyId -> Lat: ${position.latitude}");
           
           if (service is AndroidServiceInstance) {
             service.setForegroundNotificationInfo(
-              title: "Rastreio #$codigo Ativo",
-              content: "Atualizado às ${DateTime.now().hour}:${DateTime.now().minute}",
+              title: "Rastreio em Andamento",
+              content: "Última atualização: ${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2,'0')}",
             );
           }
 
+          // CHAMA O NOVO PHP DE ATUALIZAÇÃO EM MASSA
           await http.post(
-            Uri.parse('$baseUrl/atualizar_local.php'),
+            Uri.parse('$baseUrl/atualizar_local_motoboy.php'),
             body: {
-              'codigo': codigo,
+              'motoboy_id': motoboyId,
               'lat': position.latitude.toString(),
               'lng': position.longitude.toString(),
             },
           );
         } catch (e) {
-          print("Erro no envio background: $e");
+          print("Erro background: $e");
         }
       });
     }
