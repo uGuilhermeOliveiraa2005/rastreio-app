@@ -63,5 +63,8 @@
     <key>bg_permission_handler_usage_description</key>
     <string>O app precisa rodar em segundo plano para enviar a localização.</string>
 
+	<key>NSFaceIDUsageDescription</key>
+    <string>Precisamos da sua autenticação para acessar o painel de forma segura.</string>
+
 </dict>
 </plist>

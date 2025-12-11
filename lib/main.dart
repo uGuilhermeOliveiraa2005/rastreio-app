@@ -11,6 +11,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:local_auth/local_auth.dart'; // NOVA IMPORTAÇÃO
 
 import 'service_background.dart';
 
@@ -77,6 +78,59 @@ class MyApp extends StatelessWidget {
       ),
       home: const MenuScreen(),
     );
+  }
+}
+
+// ============================================================================
+// SERVIÇO DE BIOMETRIA (HELPER)
+// ============================================================================
+class BiometriaService {
+  static final LocalAuthentication auth = LocalAuthentication();
+
+  static Future<bool> autenticar(BuildContext context) async {
+    try {
+      // Verifica se o hardware suporta
+      final bool canAuthenticateWithBiometrics = await auth.canCheckBiometrics;
+      final bool canAuthenticate =
+          canAuthenticateWithBiometrics || await auth.isDeviceSupported();
+
+      // Se o dispositivo não tem hardware de biometria nem suporte básico, deixa passar.
+      if (!canAuthenticate) return true;
+
+      try {
+        final bool didAuthenticate = await auth.authenticate(
+          localizedReason: 'Por favor, autentique-se para continuar',
+          options: const AuthenticationOptions(
+            useErrorDialogs: true,
+            stickyAuth: true,
+            biometricOnly: false, // Permite PIN/Senha se biometria falhar
+          ),
+        );
+        return didAuthenticate;
+        
+      } on PlatformException catch (e) {
+        print("Erro Biometria Interno: ${e.code} - ${e.message}");
+        
+        // TRATAMENTO DE ERROS ESPECÍFICOS PARA NÃO BLOQUEAR O USUÁRIO
+        // 'NotAvailable': O dispositivo não tem segurança configurada (sem PIN/Padrão).
+        // 'NotEnrolled': O usuário não cadastrou digitais/face.
+        // 'no_biometric_hardware': Dispositivo sem sensor.
+        if (e.code == 'NotAvailable' || 
+            e.code == 'NotEnrolled' || 
+            e.code == 'no_biometric_hardware') {
+          // Se não tem segurança configurada no Android, permitimos o acesso
+          // pois não há como autenticar.
+          return true; 
+        }
+        
+        // Outros erros (ex: usuário cancelou, muitas tentativas falhas) retornam false
+        return false;
+      }
+    } catch (e) {
+      print("Erro Genérico Biometria: $e");
+      // Em caso de erro desconhecido, por segurança, retorna false (ou true se preferir não bloquear)
+      return false; 
+    }
   }
 }
 
@@ -227,7 +281,16 @@ class _MenuScreenState extends State<MenuScreen> {
     
     if (mounted) {
       if (motoboyId != null) {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => MotoboyScreen(autoRestaurar: autoRestaurar)));
+        // --- INÍCIO LÓGICA BIOMETRIA MOTOBOY ---
+        bool autenticado = await BiometriaService.autenticar(context);
+        if (autenticado) {
+          if (!mounted) return;
+          Navigator.push(context, MaterialPageRoute(builder: (_) => MotoboyScreen(autoRestaurar: autoRestaurar)));
+        } else {
+          // Opcional: Feedback se falhar
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Autenticação necessária")));
+        }
+        // --- FIM LÓGICA BIOMETRIA MOTOBOY ---
       } else {
         Navigator.push(context, MaterialPageRoute(builder: (_) => const MotoboyLoginScreen()));
       }
@@ -469,15 +532,26 @@ class _VendedorLoginScreenState extends State<VendedorLoginScreen> with SingleTi
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _verificarLoginSalvo();
+    // Movemos a verificação para depois do build para poder usar o contexto com segurança
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verificarLoginSalvo();
+    });
   }
 
   Future<void> _verificarLoginSalvo() async {
     final prefs = await SharedPreferences.getInstance();
     final id = prefs.getString('vendedor_id');
     final nome = prefs.getString('vendedor_nome');
+    
     if (id != null && mounted) {
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => VendedorDashboardScreen(id: id, nome: nome ?? "Vendedor")));
+      // --- INÍCIO LÓGICA BIOMETRIA VENDEDOR ---
+      bool autenticado = await BiometriaService.autenticar(context);
+      if (autenticado) {
+        if (!mounted) return;
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => VendedorDashboardScreen(id: id, nome: nome ?? "Vendedor")));
+      }
+      // Se não autenticar, permanece na tela de login, permitindo digitar a senha ou tentar novamente
+      // --- FIM LÓGICA BIOMETRIA VENDEDOR ---
     }
   }
 
@@ -1025,7 +1099,9 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
         if (response.statusCode == 200) {
              setState(() { _codigoSessao = novoCodigo; _totalEntregas = qtd; _entregasConcluidas = 0; _modoMultiplo = qtd > 1; _isLoading = false; });
             _salvarProgresso();
-            final service = FlutterBackgroundService(); await service.startService(); service.invoke("startTracking", {'codigo': novoCodigo});
+            final service = FlutterBackgroundService(); await service.startService(); 
+            // CORREÇÃO APLICADA: Enviando também o motoboy_id
+            service.invoke("startTracking", {'codigo': novoCodigo, 'motoboy_id': _motoboyId});
         } else { setState(() => _isLoading = false); }
       } catch (e) { setState(() => _isLoading = false); }
     } else { setState(() => _isLoading = false); }
@@ -1049,7 +1125,8 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
     // Reinicia o tracking
     final service = FlutterBackgroundService(); 
     if (!(await service.isRunning())) await service.startService(); 
-    service.invoke("startTracking", {'codigo': codigo});
+    // CORREÇÃO APLICADA: Enviando também o motoboy_id
+    service.invoke("startTracking", {'codigo': codigo, 'motoboy_id': _motoboyId});
     
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Entrega retomada!"), backgroundColor: Colors.green));
   }
@@ -1074,7 +1151,8 @@ class _MotoboyScreenState extends State<MotoboyScreen> with WidgetsBindingObserv
       setState(() { _codigoSessao = c; _totalEntregas = p.getInt('sessao_total')??1; _entregasConcluidas = p.getInt('sessao_concluidas')??0; _modoMultiplo = p.getBool('sessao_multipla')??false; _isLoading = false; });
       final s = FlutterBackgroundService(); 
       if (!(await s.isRunning())) await s.startService(); 
-      s.invoke("startTracking", {'codigo': _codigoSessao});
+      // CORREÇÃO APLICADA: Enviando também o motoboy_id
+      s.invoke("startTracking", {'codigo': _codigoSessao, 'motoboy_id': _motoboyId});
     } else { 
       setState(() => _isLoading = false);
       // Se não tem local, busca no banco
